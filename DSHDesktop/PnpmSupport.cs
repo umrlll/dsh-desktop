@@ -241,8 +241,16 @@ internal static class PnpmSupport
     /// 从 profile 的 <c>node_modules/.modules.yaml</c> 的 storeDir 推断该用哪个 pnpm 大版本。
     ///
     /// 这个数字不能随便取：node_modules 是某个具体的 store 链接出来的，pnpm 大版本与 store
-    /// 版本不匹配时会直接拒绝一切安装与卸载（<c>ERR_PNPM_UNEXPECTED_STORE</c>，本项目已经
-    /// 踩过一次：用 pnpm 10 动 v11 的 store）。所以优先跟随 profile 已有的 store 版本。
+    /// 版本不匹配时会直接拒绝一切安装与卸载（<c>ERR_PNPM_UNEXPECTED_STORE</c>）。
+    ///
+    /// 分隔符必须写成 <c>[\\/]{1,2}</c> 而不是 <c>[\\/]</c>：.modules.yaml 里的 storeDir 是
+    /// <b>JSON 转义</b>后的路径，Windows 上 store 与版本号之间会出现<b>两个</b>反斜杠
+    /// （实测 <c>"...\\pnpm\\store\\v11"</c> 的字节为 <c>5C 5C 76 31 31</c>）。
+    /// 旧的 <c>store[\\/]v</c> 在正则里只等价于「一个反斜杠或一个斜杠」，因此在 Windows 上
+    /// 对任何 vNN 都<b>恒不匹配</b>、静默回落到 <see cref="DefaultMajor"/>——v11 store 恰好与
+    /// 默认值相同所以一直没暴露，一旦某个 profile 的 store 是 v10 就会立刻报
+    /// ERR_PNPM_UNEXPECTED_STORE（v10 的 storeDir 同样是双反斜杠，同样匹配不到，于是被当成 v11）。
+    /// 该缺陷由评审发现（2026-09-14）。
     /// </summary>
     internal static int StoreMajor(string profileDir)
     {
@@ -251,7 +259,7 @@ internal static class PnpmSupport
             var file = Path.Combine(profileDir, "node_modules", ".modules.yaml");
             if (!File.Exists(file)) return DefaultMajor;
             var match = System.Text.RegularExpressions.Regex.Match(
-                File.ReadAllText(file), @"store[\\/]v(?<major>\d{1,2})\b");
+                File.ReadAllText(file), @"store[\\/]{1,2}v(?<major>\d{1,2})\b");
             if (!match.Success) return DefaultMajor;
             var major = int.Parse(match.Groups["major"].Value);
             return major is >= 8 and <= 20 ? major : DefaultMajor;
