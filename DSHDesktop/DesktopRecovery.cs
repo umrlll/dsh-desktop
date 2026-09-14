@@ -108,6 +108,7 @@ internal static class DesktopRecovery
             var pending = Path.Combine(ProfileStateDir(profile), "pending");
             if (!Directory.Exists(pending)) return;
             var good = SnapshotDir(profile);
+            // good 由 ProfileStateDir(profile) 与固定子目录名组合而成，必然含父目录
             Directory.CreateDirectory(Path.GetDirectoryName(good)!);
 
             // 提交换入必须「先保留旧值 → 再换入 → 成功后才清理」（优化清单 B2）。
@@ -142,6 +143,7 @@ internal static class DesktopRecovery
             // 避免 previous == null 时把遗留目录一直留在磁盘上。
             try
             {
+                // good 由 ProfileStateDir(profile) 与固定子目录名组合而成，必然含父目录
                 var stateDir = Path.GetDirectoryName(good)!;
                 foreach (var stale in Directory.GetDirectories(stateDir, Path.GetFileName(good) + ".old-*"))
                 {

@@ -1692,6 +1692,7 @@ public partial class MainWindow : Window
         if (binJs == null) return "未知";
         try
         {
+            // binJs 是 File.Exists 通过后的绝对文件路径（见 DshNodeBinJs），必然含父目录
             var pkg = Path.Combine(Path.GetDirectoryName(binJs)!, "..", "package.json");
             if (File.Exists(pkg))
             {
@@ -1799,6 +1800,9 @@ public partial class MainWindow : Window
     {
         var binJs = DshNodeBinJs();
         if (binJs == null) return null;
+        // 沿路径逐级上溯取安装根。<c>DshNodeBinJs()</c> 只返回两个候选（内置 runtime 或
+        // npx 缓存）下的绝对文件路径，最浅也远深于 5 层，所以 Path.GetDirectoryName 不可能
+        // 返回 null；这里与 ToolDirs() 采用同一种写法（`!`），不引入空的判空分支。
         var lib = Path.GetDirectoryName(binJs)!;        // ...\lib
         var pkg = Path.GetDirectoryName(lib)!;          // ...\@deepseek-ai\dsh
         var scope = Path.GetDirectoryName(pkg)!;        // ...\node_modules\@deepseek-ai
@@ -2282,6 +2286,7 @@ public partial class MainWindow : Window
         var node2 = FindNode();
         if (node2 != null)
         {
+            // node2 是 File.Exists 通过后的绝对文件路径（见 FindNode），必然含父目录
             var cli2 = Path.Combine(Path.GetDirectoryName(node2)!, "node_modules", "npm", "bin", "npm-cli.js");
             if (File.Exists(cli2)) return (node2, cli2);
         }

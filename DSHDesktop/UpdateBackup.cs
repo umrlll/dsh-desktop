@@ -67,6 +67,7 @@ internal static class UpdateBackup
 
                 if (File.Exists(src))
                 {
+                    // dst 由 Path.Combine(root, asset) 构造，必然含父目录
                     Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                     File.Copy(src, dst, overwrite: true);
                 }
@@ -123,6 +124,7 @@ internal static class UpdateBackup
                 {
                     if (File.Exists(bak))
                     {
+                        // 同上：dst 必然含父目录
                         Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                         File.Copy(bak, dst, overwrite: true);
                     }

@@ -54,6 +54,18 @@ dotnet publish DSHDesktop\DSHDesktop.csproj -c Release
 > **不要用解决方案级命令**：`dotnet build DSH.slnx` / `dotnet restore DSH.slnx` 在当前状态下
 > **静默失败**（0 错误 0 警告但 exit=1，属既存问题）。请始终按**单个 csproj** 构建与测试。
 
+### 空值处理约定（`Nullable` 已全程开启）
+
+构建必须保持**零警告**；`!`（null-forgiving）只在**能一句话说清依据**时使用，并在该行或上一行写明理由。
+
+| 场景 | 约定 |
+|---|---|
+| 参数是**构造出来的路径**（`Path.Combine` 的结果、或经 `File.Exists` 校验的绝对文件路径） | 可用 `!` —— 它必然含父目录；须就近注明依据（例："由 `Path.Combine(root, asset)` 构造，必然含父目录"） |
+| 值来自**外部/不可控来源**（`FindNode()`、`DshNodeBinJs()`、`Process.Start`、环境变量、配置） | **必须显式判空**并给出失败分支，不得用 `!` 糊掉 |
+| 同一段推导在文件内多处出现 | 用**同一种**写法，避免同一件事两种风格（这是本仓库曾出现过的可读性问题） |
+
+**不要用 `!` 消除告警**——它只压制编译器，不改变运行期行为；`Process.Start` 那类返回 null 的调用若被 `!` 掉，异常会冒到全局未处理出口（弹框 + `Shutdown(1)`）。
+
 ### 版本号治理
 
 版本与产品元数据的**单一来源**是仓库根的 [`Directory.Build.targets`](Directory.Build.targets)，

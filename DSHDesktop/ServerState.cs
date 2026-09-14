@@ -52,6 +52,7 @@ internal static class ServerState
     {
         var path = PathFor(root, profile);
         var tmp = path + ".tmp";
+        // path 由 Path.Combine(root, Sanitize(profile), FileName) 构造，必然含父目录
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(tmp, JsonSerializer.Serialize(record));
         File.Move(tmp, path, overwrite: true);
