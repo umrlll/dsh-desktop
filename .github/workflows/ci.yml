@@ -38,13 +38,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # v4 目标是 Node 20，已被 GitHub 弃用并强制跑在 Node 24（会报 deprecation 告警）
+        uses: actions/checkout@v7
         with:
           # InformationalVersion 里带 git 短 SHA，需要完整历史/提交信息
           fetch-depth: 0
 
       - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
+        # 同上：v4 → v6
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
