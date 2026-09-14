@@ -126,7 +126,8 @@ jobs:
 
       - name: Upload signed artifacts
         if: ${{ env.SIGNING_PFX_BASE64 != '' }}
-        uses: actions/upload-artifact@v4
+        # v4 目标是 Node 20（已被 GitHub 弃用并强制跑在 Node 24）；实测最新为 v7
+        uses: actions/upload-artifact@v7
         with:
           name: DSHDesktop-${{ steps.ver.outputs.prefix }}-build${{ steps.ver.outputs.buildid }}
           path: |
