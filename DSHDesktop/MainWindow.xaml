@@ -1,0 +1,891 @@
+<Window x:Class="DSHDesktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:term="clr-namespace:DSHDesktop.Terminal"
+        xmlns:auto="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+        Title="DSH Desktop"
+        Icon="/DSH.ico"
+        Width="1400" Height="880"
+        MinWidth="900" MinHeight="600"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen"
+        Background="#151517"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        Loaded="Window_Loaded"
+        StateChanged="Window_StateChanged"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closing="Window_Closing"
+        Closed="Window_Closed">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="36"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- ============ 颜色 ============ -->
+        <SolidColorBrush x:Key="TitleBarBrush" Color="#161A1E"/>
+        <SolidColorBrush x:Key="StatusBarBrush" Color="#161A1E"/>
+        <SolidColorBrush x:Key="DividerBrush" Color="#23282E"/>
+        <SolidColorBrush x:Key="IconButtonBrush" Color="#1B1D21"/>
+        <SolidColorBrush x:Key="IconButtonHoverBrush" Color="#23282E"/>
+        <SolidColorBrush x:Key="IconButtonHoverBorderBrush" Color="#3A4149"/>
+        <SolidColorBrush x:Key="IconButtonPressedBrush" Color="#2E353D"/>
+        <SolidColorBrush x:Key="IconGlyphBrush" Color="#C8CDD6"/>
+        <SolidColorBrush x:Key="TitleTextBrush" Color="#E9EDF2"/>
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8C94A2"/>
+
+        <!-- ============ 强调色（更新浮层专用） ============
+             取自 DSH 自己的静态调色板，保证桌面端浮层与内嵌 Web UI 的观感同源。
+             对应令牌（写成不带前缀横线的形式，避免 XML 注释里出现连续两个横线）：
+             dsw-static-deepseek-450 = #5686fe（品牌蓝）、dsw-static-green-400 = #4ed17e、
+             dsw-static-amber-400 = #f7ad31（通道点）。
+             这几个静态色在深浅两套主题下都不变，而浮层本身是深色面板，故直接用固定值。 -->
+        <SolidColorBrush x:Key="UpdateAccentBrush" Color="#5686FE"/>
+        <SolidColorBrush x:Key="UpdateAccentHoverBrush" Color="#6B96FF"/>
+        <SolidColorBrush x:Key="UpdateAccentPressedBrush" Color="#4176E6"/>
+        <SolidColorBrush x:Key="UpdateChipBrush" Color="#232B4E"/>
+        <SolidColorBrush x:Key="UpdateChipBorderBrush" Color="#33406E"/>
+        <SolidColorBrush x:Key="UpdateChipTextBrush" Color="#A8B8FF"/>
+        <SolidColorBrush x:Key="UpdateChannelStableBrush" Color="#4ED17E"/>
+        <SolidColorBrush x:Key="UpdateChannelPreBrush" Color="#F7AD31"/>
+        <SolidColorBrush x:Key="UpdateNotesSurfaceBrush" Color="#15181C"/>
+        <!-- 「发现新版本」那颗铃铛：与更新浮层的通道点同色（DSH 静态 amber-400）——
+             有更新是一种提醒而不是错误，所以用琥珀而不是红。 -->
+        <SolidColorBrush x:Key="UpdateBellBrush" Color="#F7AD31"/>
+
+        <!-- ============ 标题栏图标按钮 ============ -->
+        <Style x:Key="TitleIconButton" TargetType="Button">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Background" Value="{StaticResource IconButtonBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource IconGlyphBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="6" BorderThickness="1"
+                                Background="{TemplateBinding Background}" BorderBrush="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource IconButtonHoverBorderBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonPressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <!-- 浮层展开态：锚点按钮必须能看出自己对应的浮层正开着（参考实现用
+                 aria-expanded 高亮，见 extended-styles.ts:347-352）。用 Tag 承担状态，
+                 避免把锚点改成 ToggleButton 从而改变点击语义。 -->
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="True">
+                    <Setter Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource TitleTextBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ============ 窗口按钮（最小化/最大化/关闭） ============ -->
+        <Style x:Key="CaptionButton" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource IconGlyphBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#262B31"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#323841"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CloseCaptionButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#C42B1C"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#A5241A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ============ 状态栏小按钮 ============ -->
+        <Style x:Key="StatusButton" TargetType="Button">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#D7DDE8"/>
+            <Setter Property="Background" Value="{StaticResource IconButtonBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#2A3037"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource IconButtonHoverBorderBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonPressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ============ 标题栏版本胶囊 ============ -->
+        <!-- 基于 StatusButton，但补两件事：① 展开态高亮（StatusButton 没有 Tag 触发器，
+             直接复用它会让 SetTitleBarTag(BtnVersion, …) 变成空操作）；② 命中测试豁免
+             在元素上内联（见 BtnVersion），不污染 StatusButton——那被 caption 区之外的
+             状态栏与 TUI 面板头部复用。 -->
+        <Style x:Key="VersionChipButton" TargetType="Button" BasedOn="{StaticResource StatusButton}">
+            <Setter Property="MinWidth" Value="42"/>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="True">
+                    <Setter Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource IconButtonHoverBorderBrush}"/>
+                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ============ 状态栏锚点按钮（带展开态高亮） ============
+             与 VersionChipButton 同一手法：StatusButton 本身没有 Tag 触发器，直接复用会让
+             SetTitleBarTag 的视觉部分变成空操作；这里只给状态栏的两个浮层锚点（详情 / ⋯）
+             补上高亮，不污染共用的 StatusButton（TUI 面板头也用它）。 -->
+        <Style x:Key="StatusAnchorButton" TargetType="Button" BasedOn="{StaticResource StatusButton}">
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="True">
+                    <Setter Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource IconButtonHoverBorderBrush}"/>
+                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ============ 标题栏浮层容器（对照参考实现） ============
+             参考 extended-styles.ts:176-187 (.dshDesktopVersionPopover) 与 :361-373 (.dshDesktopActionMenu)：
+             border: 1px solid border-l1；border-radius: 10px；background: bg-layer-1；
+             box-shadow: 0 12px 32px rgba(0,0,0,.28)。WPF 侧用 DropShadowEffect 等价表达。
+             所有标题栏浮层（版本 / 重启族 / 开发者 / 更新详情）共用本样式，避免四处各写一份。 -->
+        <Style x:Key="TitleBarPopupSurface" TargetType="Border">
+            <Setter Property="Background" Value="#1B1F26"/>
+            <Setter Property="BorderBrush" Value="#2A3037"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="32" ShadowDepth="12" Direction="270"
+                                      Opacity="0.28" Color="#000000"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 下拉菜单容器：在浮层表面上补内边距 5 与 min-width 190（对照 .dshDesktopActionMenu 的
+             min-width: 190px; padding: 5px） -->
+        <Style x:Key="TitleBarPopupMenu" TargetType="Border" BasedOn="{StaticResource TitleBarPopupSurface}">
+            <Setter Property="MinWidth" Value="190"/>
+            <Setter Property="Padding" Value="5"/>
+        </Style>
+
+        <!-- 浮层内按钮：对照 .dshDesktopVersionCheckButton（:201-216）——
+             min-height 30px；padding 5px 9px；1px border-l2；radius 7px；字号 12px。 -->
+        <Style x:Key="TitleBarPopupButton" TargetType="Button">
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Padding" Value="9,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#E9EDF2"/>
+            <Setter Property="Background" Value="#20242B"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#333A43"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource IconButtonHoverBorderBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonPressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 深色复选框：系统默认复选框是浅色外观（白色方框 + 黑色勾），出现在深色浮层里
+             非常突兀。勾用矢量 Path 画，不依赖图标字体的码位。 -->
+        <Style x:Key="DarkCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Border x:Name="Box" Width="15" Height="15" CornerRadius="4"
+                                    Background="Transparent" BorderThickness="1"
+                                    BorderBrush="{StaticResource IconButtonHoverBorderBrush}"
+                                    VerticalAlignment="Center" Margin="0,0,8,0">
+                                <Path x:Name="Tick" Data="M 1,5 L 4.2,8 L 10,2" Stroke="#FFFFFF"
+                                      StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="{StaticResource UpdateAccentBrush}"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource UpdateAccentBrush}"/>
+                                <Setter TargetName="Tick" Property="Visibility" Value="Visible"/>
+                                <Setter Property="Foreground" Value="{StaticResource TitleTextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource UpdateAccentBrush}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TitleTextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 版本号：对照 .dshDesktopVersionPopoverHeader strong（label-primary / 12px / 600） -->
+        <Style x:Key="TitleBarPopupValue" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TitleTextBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <!-- ============ 更新浮层（现代化重构，2026-09-12） ============
+             主按钮：品牌蓝实心（唯一"会改变状态"的动作，视觉上必须最重）；
+             幽灵按钮：次级收尾动作，无边框、hover 才浮现底色。
+             两者与 TitleBarPopupButton 共用 30px 高 / radius 7 / 12px 字号，
+             所以三颗按钮并排时基线一致。 -->
+        <Style x:Key="UpdatePrimaryButton" TargetType="Button">
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Padding" Value="14,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="Background" Value="{StaticResource UpdateAccentBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource UpdateAccentHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource UpdateAccentPressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="UpdateGhostButton" TargetType="Button">
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource IconButtonHoverBrush}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TitleTextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 更新说明的排版：标题带品牌色左条、正文 18px 行高、项目符号悬挂缩进。 -->
+        <Style x:Key="UpdateNotesHeading" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TitleTextBrush}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,10,0,4"/>
+        </Style>
+        <Style x:Key="UpdateNotesBody" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#C8CDD6"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="LineHeight" Value="18"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,2,0,2"/>
+        </Style>
+        <Style x:Key="UpdateNotesBullet" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource UpdateAccentBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="LineHeight" Value="18"/>
+            <Setter Property="Margin" Value="0,2,6,2"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+        </Style>
+
+        <!-- 标题栏菜单项：对照 .dshDesktopActionMenuItem（:376-393）——
+             display:flex; gap: 9px; min-height: 32px; padding: 5px 9px; border-radius: 7px。
+             必须自带 ControlTemplate：系统默认 MenuItem 模板会画出浅色高亮，
+             设 Background 压不住它。 -->
+        <Style x:Key="TitleBarMenuItem" TargetType="MenuItem">
+            <Setter Property="Foreground" Value="#E9EDF2"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="9,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Focusable" Value="True"/>
+            <Setter Property="MinHeight" Value="32"/>
+            <!-- 178 = 菜单 min-width 190 − 左右 padding 5×2 − 描边 1×2，使菜单项撑满菜单宽度 -->
+            <Setter Property="MinWidth" Value="178"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Bd" CornerRadius="7"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" ContentSource="Icon"
+                                                  VerticalAlignment="Center" Margin="0,0,9,0"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                                  VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#23282E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 版本浮层里的元信息小字：对照 .dshDesktopVersionPopoverHeader（font-size: 11px） -->
+        <Style x:Key="TitleBarPopupCaption" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#8C94A2"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+
+        <!-- 标题栏内联错误文本：对照 .dshDesktopVersionCheckError（font-size: 11px；错误色） -->
+        <Style x:Key="TitleBarErrorText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#E06C75"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#26292E"/>
+            <Setter Property="Foreground" Value="#E9EDF2"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+
+        <!-- ==================== 自定义标题栏 ==================== -->
+        <Grid DockPanel.Dock="Top" Height="36" Background="{StaticResource TitleBarBrush}">
+            <!-- 居中身份区：产品名 + 可点击版本按钮（版本号独立可点，来源信息在 ToolTip/浮层里） -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="DSH Desktop" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{StaticResource TitleTextBrush}" VerticalAlignment="Center"/>
+                <!-- WindowChrome.IsHitTestVisibleInChrome 必须内联设置：StatusButton 样式
+                     没有该 Setter，缺它则 caption 区内的点击会被判为 HTCAPTION（点按钮变拖窗），
+                     版本浮层对鼠标用户完全不可达。不要加到 StatusButton 上——状态栏与 TUI
+                     面板头部也复用它，且那些位置在 caption 区之外。 -->
+                <Button x:Name="BtnVersion" Content="dsh v--" Margin="8,0,0,0" Padding="6,2"
+                        Style="{StaticResource VersionChipButton}" Height="24" Focusable="True"
+                        Tag="False"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Click="OnToggleVersionPopup" ToolTip="DeepSeek Harness 版本"
+                        auto:AutomationProperties.Name="当前 dsh 版本，点击查看版本与检查更新"/>
+            </StackPanel>
+
+            <!-- 左侧动作组：终端（直接动作） / 重启族菜单 / 开发者菜单 -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center"
+                        Margin="8,0,0,0">
+                <Button x:Name="BtnTui" Style="{StaticResource TitleIconButton}"
+                        Click="OnToggleTui" ToolTip="集成 TUI 终端（PowerShell）"
+                        auto:AutomationProperties.Name="集成 TUI 终端">
+                    <Path Stroke="#C8CDD6" StrokeThickness="1.3"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round">
+                        <Path.Data>
+                            <GeometryGroup>
+                                <RectangleGeometry Rect="1.4,1.4,13.2,13.2" RadiusX="1.1" RadiusY="1.1"/>
+                                <PathGeometry Figures="M4.7,5.8 L7.1,8.0 L4.7,10.2"/>
+                                <LineGeometry StartPoint="8.9,9.6" EndPoint="11.9,9.6"/>
+                            </GeometryGroup>
+                        </Path.Data>
+                    </Path>
+                </Button>
+                <Button x:Name="BtnRestartMenu" Style="{StaticResource TitleIconButton}" Content="&#xE72C;"
+                        Tag="False"
+                        Click="OnToggleRestartMenu" ToolTip="重载与重启选项"
+                        auto:AutomationProperties.Name="重载与重启选项"
+                        auto:AutomationProperties.HelpText="重载渲染器、重启桌面端、重启到恢复模式"/>
+                <Button x:Name="BtnDevMenu" Style="{StaticResource TitleIconButton}" Content="&#xE90F;"
+                        Tag="False"
+                        Click="OnToggleDevMenu" ToolTipService.InitialShowDelay="300"
+                        auto:AutomationProperties.Name="开发者选项">
+                    <Button.ToolTip>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xEBE8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="开发者选项" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button.ToolTip>
+                </Button>
+            </StackPanel>
+
+            <!-- 右侧窗口按钮（有更新时最左侧出现铃铛）
+                 铃铛码位是 E A8F（Fluent Icons / MDL2 两套字体里都是铃铛）；原先写的 E7E7
+                 在这两套字体的本机版本里其实是「对话气泡」——渲染出来完全不是铃铛
+                 （2026-09-12 反馈"样式不对"，字形对照见 D:\dsh\.build\glyph-probe\glyphs.png）。
+                 字号 12 介于窗口按钮的 10 与"提醒"的强调之间；颜色用调色板琥珀。 -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button x:Name="BtnUpdateBell" Style="{StaticResource CaptionButton}" Content="&#xEA8F;"
+                        Width="38" FontSize="12" Foreground="{StaticResource UpdateBellBrush}" Visibility="Collapsed"
+                        Click="OnToggleUpdatePopup" ToolTip="发现新版本"
+                        auto:AutomationProperties.Name="发现新版本，点击查看详情"/>
+                <Button x:Name="BtnMinimize" Style="{StaticResource CaptionButton}" Content="&#xE921;"
+                        Click="OnMinimize" ToolTip="最小化"
+                        auto:AutomationProperties.Name="最小化"/>
+                <Button x:Name="BtnMaximize" Style="{StaticResource CaptionButton}" Content="&#xE922;"
+                        Click="OnMaximizeRestore" ToolTip="最大化"
+                        auto:AutomationProperties.Name="最大化或还原"/>
+                <Button x:Name="BtnClose" Style="{StaticResource CloseCaptionButton}" Content="&#xE8BB;"
+                        Click="OnClose" ToolTip="收起到托盘（退出请用托盘菜单「退出」）"
+                        auto:AutomationProperties.Name="收起到托盘，不退出程序"/>
+            </StackPanel>
+
+            <!-- ============ 版本浮层：身份区版本按钮的锚点浮层 ============
+                 尺寸对照 .dshDesktopVersionPopover（width: 210px; padding: 10px; gap: 9px）；
+                 头部对照 .dshDesktopVersionPopoverHeader（space-between + 基线对齐，
+                 左为 label-secondary、右为 label-primary/600）。 -->
+            <!-- 浮层水平**居中**到版本胶囊：Placement="Bottom" 的语义是"浮层左缘与目标左缘
+                 对齐"，所以居中要靠 HorizontalOffset = (胶囊宽 - 浮层宽) / 2 —— 胶囊宽度随
+                 版本号长度变化，故偏移量在打开时按 ActualWidth 现算（见 OnToggleVersionPopup），
+                 这里留 0 只是初始值。 -->
+            <Popup x:Name="VersionPopup" PlacementTarget="{Binding ElementName=BtnVersion}"
+                   Placement="Bottom" HorizontalOffset="0" VerticalOffset="6"
+                   StaysOpen="False" AllowsTransparency="True">
+                <Border x:Name="VersionPopupSurface" Style="{StaticResource TitleBarPopupSurface}" Width="210" Padding="10">
+                    <StackPanel>
+                        <!-- 头部两行两列：第 0 行「当前版本 | 版本号」，第 1 行「来源 | 取值」。
+                             两列都是 Auto 且整块 HorizontalAlignment="Center"：标签列宽度由
+                             「当前版本」与「来源」中较宽者决定（因此两行取值的左缘必然重合），
+                             取值紧随标签之后，两行作为**一组**在浮层里水平居中。
+                             前后试过三种口径：① 取值左对齐在 Auto 列里（被 * 列挤到行尾，
+                             取值左缘落在行中间）；② 取值右对齐贴浮层内缘（两行被拉成
+                             "标签贴左、取值贴右"，中间一大片空白）；③ 当前：整块居中。
+                             样式逐列对称：两行取值都用 TitleBarPopupValue，两行标签都用
+                             TitleBarPopupCaption —— 改字体时两列要同步改。 -->
+                        <Grid HorizontalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="当前版本"
+                                       Style="{StaticResource TitleBarPopupCaption}"
+                                       Margin="0,0,10,0" VerticalAlignment="Bottom"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource TitleBarPopupValue}"
+                                       HorizontalAlignment="Left" VerticalAlignment="Bottom">
+                                <Run Text="dsh v"/><Run x:Name="VersionPopupValue" Text="--"/>
+                            </TextBlock>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="来源"
+                                       Style="{StaticResource TitleBarPopupCaption}"
+                                       Margin="0,2,10,0" VerticalAlignment="Bottom"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="VersionPopupSource"
+                                       Style="{StaticResource TitleBarPopupValue}"
+                                       HorizontalAlignment="Left" Margin="0,2,0,0" VerticalAlignment="Bottom"/>
+                        </Grid>
+                        <TextBlock x:Name="VersionPopupError" Style="{StaticResource TitleBarErrorText}"
+                                   Margin="0,8,0,0" Visibility="Collapsed"
+                                   auto:AutomationProperties.LiveSetting="Assertive"/>
+                        <!-- 动作区：整行宽按钮（图标 + 居中文案），有可用更新时「查看更新详情」
+                             叠在「检查更新」上方。先前是两颗小按钮右对齐挤在浮层右下角。 -->
+                        <StackPanel Margin="0,10,0,0">
+                            <Button x:Name="BtnVersionDetails" Content="查看更新详情" Click="OnShowUpdateDetails"
+                                    Style="{StaticResource TitleBarPopupButton}"
+                                    HorizontalAlignment="Stretch" Margin="0,0,0,6" Visibility="Collapsed"
+                                    auto:AutomationProperties.Name="查看更新详情"/>
+                            <Button x:Name="BtnVersionCheck" Click="OnCheckUpdate"
+                                    Style="{StaticResource TitleBarPopupButton}"
+                                    HorizontalAlignment="Stretch"
+                                    auto:AutomationProperties.Name="检查更新">
+                                <!-- 文案由 BtnVersionCheckText 承载（BtnVersionCheck.Content 会被
+                                     忙碌态改写，故不能把图标与文案一起塞进 Content）。字形与
+                                     「重载渲染器」同款刷新图标。 -->
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="13" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                                    <TextBlock x:Name="BtnVersionCheckText" Text="检查更新"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
+
+            <!-- ============ 重启族菜单 ============
+                 参考 .dshDesktopActionMenu（:361-373）是「垂直排列、每项 = 图标 + 文案」的列表；
+                 WPF Menu 默认把顶层项横向排列，因此必须显式把 ItemsPanel 换成竖向 StackPanel，
+                 否则三项会并排成一行。图标对照 DesktopNativeActions.tsx 的
+                 RefreshCw / RotateCw / LifeBuoy。 -->
+            <Popup x:Name="RestartMenu" PlacementTarget="{Binding ElementName=BtnRestartMenu}"
+                   Placement="Bottom" VerticalOffset="6"
+                   StaysOpen="False" AllowsTransparency="True">
+                <Border Style="{StaticResource TitleBarPopupMenu}">
+                    <Menu Background="Transparent" Foreground="#E9EDF2" FontSize="12"
+                          ItemContainerStyle="{StaticResource TitleBarMenuItem}">
+                        <Menu.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Vertical"/>
+                            </ItemsPanelTemplate>
+                        </Menu.ItemsPanel>
+                        <MenuItem Header="重载渲染器" Click="OnMenuReloadRenderer"
+                                  auto:AutomationProperties.Name="重载渲染器">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                            </MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem Header="重启桌面端" Click="OnMenuRestartDesktop"
+                                  auto:AutomationProperties.Name="重启桌面端">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE895;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                            </MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem Header="重启到恢复模式" Click="OnMenuRestartToRecovery"
+                                  auto:AutomationProperties.Name="重启到恢复模式">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE897;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                            </MenuItem.Icon>
+                        </MenuItem>
+                    </Menu>
+                </Border>
+            </Popup>
+
+            <!-- ============ 开发者菜单（仅一项） ============ -->
+            <Popup x:Name="DevMenu" PlacementTarget="{Binding ElementName=BtnDevMenu}"
+                   Placement="Bottom" VerticalOffset="6"
+                   StaysOpen="False" AllowsTransparency="True">
+                <Border Style="{StaticResource TitleBarPopupMenu}">
+                    <Menu Background="Transparent" Foreground="#E9EDF2" FontSize="12"
+                          ItemContainerStyle="{StaticResource TitleBarMenuItem}">
+                        <Menu.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Vertical"/>
+                            </ItemsPanelTemplate>
+                        </Menu.ItemsPanel>
+                        <MenuItem Header="切换开发者工具" Click="OnMenuToggleDevTools"
+                                  auto:AutomationProperties.Name="切换开发者工具">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE90F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                            </MenuItem.Icon>
+                        </MenuItem>
+                    </Menu>
+                </Border>
+            </Popup>
+
+            <!-- 更新详情浮层 -->
+            <!-- 锚定身份区版本按钮而非条件可见的铃铛：铃铛隐藏时锚点仍然有效，
+                 偏移量使浮层右缘贴近窗口右侧 -->
+            <Popup x:Name="UpdatePopup" PlacementTarget="{Binding ElementName=BtnVersion}"
+                   Placement="Bottom" HorizontalOffset="-364" VerticalOffset="6"
+                   StaysOpen="False" AllowsTransparency="True">
+                <Border Style="{StaticResource TitleBarPopupSurface}" Width="400" Padding="16">
+                    <StackPanel>
+                        <!-- 标题行：左边固定文案，右边一枚品牌色调的版本胶囊（版本号是这次
+                             弹窗的主角，从标题里拆出来单独强调）。 -->
+                        <Grid>
+                            <TextBlock x:Name="PopupTitle" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TitleTextBrush}" Text="发现新版本"
+                                       VerticalAlignment="Center"/>
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Background="{StaticResource UpdateChipBrush}"
+                                    BorderBrush="{StaticResource UpdateChipBorderBrush}" BorderThickness="1"
+                                    CornerRadius="999" Padding="8,2">
+                                <TextBlock x:Name="PopupVersionChip" Text="v--" FontSize="11.5"
+                                           FontWeight="SemiBold" Foreground="{StaticResource UpdateChipTextBrush}"/>
+                            </Border>
+                        </Grid>
+                        <!-- 元信息行：通道圆点 + 当前版本/通道说明（点色随通道：稳定绿 / 预发布琥珀）。 -->
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Ellipse x:Name="PopupChannelDot" Width="6" Height="6"
+                                     Fill="{StaticResource UpdateChannelStableBrush}"
+                                     VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock x:Name="PopupSubtitle" FontSize="11.5"
+                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <!-- 更新说明：由代码把 Release 正文解析成块（标题 / 项目符号 / 正文 / 分隔线），
+                             不再把 Markdown 与 <h3 id=…> 原样倒进 TextBlock（旧版满屏 [中文](#anchor)）。 -->
+                        <Border Background="{StaticResource UpdateNotesSurfaceBrush}"
+                                BorderBrush="{StaticResource DividerBrush}" BorderThickness="1"
+                                CornerRadius="8" Margin="0,12,0,0" Padding="12,10">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="300">
+                                <StackPanel x:Name="PopupNotesPanel"/>
+                            </ScrollViewer>
+                        </Border>
+                        <!-- 底栏：细分隔线 + 主/次/收尾三档动作。 -->
+                        <Border Height="1" Background="{StaticResource DividerBrush}" Margin="0,14,0,0"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                            <Button x:Name="BtnPopupUpdate" Content="立即更新" Click="OnApplyUpdate"
+                                    Style="{StaticResource UpdatePrimaryButton}" Margin="0,0,8,0"
+                                    auto:AutomationProperties.Name="立即更新"/>
+                            <Button x:Name="BtnPopupBrowser" Content="在浏览器中查看" Click="OnOpenReleasePage"
+                                    Style="{StaticResource TitleBarPopupButton}" Margin="0,0,8,0"
+                                    auto:AutomationProperties.Name="在浏览器中查看发布页面"/>
+                            <Button x:Name="BtnPopupClose" Content="关闭" Click="OnCloseUpdatePopup"
+                                    Style="{StaticResource UpdateGhostButton}"
+                                    auto:AutomationProperties.Name="关闭更新说明"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
+
+            <!-- ============ 状态栏两个浮层 ============
+                 与其它标题栏浮层同住这个 Grid：Popup 是浮动的，不参与布局，
+                 所以绝不能放到外层 DockPanel（LastChildFill 会把它当成最后一个子元素，
+                 网页区会失去填充位）。Placement="Top" + 负 VerticalOffset 让浮层出现在
+                 状态栏上方并留 6px 间隔。⋯ 菜单的 HorizontalOffset 由固定 Width="200"
+                 反推（-206 = -200 - 6 边距），窗口宽度变化时右缘始终贴住锚点按钮。 -->
+            <Popup x:Name="StatusMenu" PlacementTarget="{Binding ElementName=BtnMore}"
+                   Placement="Top" VerticalOffset="-6" HorizontalOffset="-206"
+                   StaysOpen="False" AllowsTransparency="True">
+                <Border Style="{StaticResource TitleBarPopupMenu}" Width="200">
+                    <StackPanel>
+                        <Button x:Name="BtnToggle" Content="停止 DSH 服务" Click="OnToggleServer"
+                                Style="{StaticResource TitleBarPopupButton}" HorizontalAlignment="Stretch"
+                                auto:AutomationProperties.Name="停止或启动 DSH 服务"/>
+                        <Button x:Name="BtnExternal" Content="外部浏览器打开" Click="OnOpenExternal"
+                                Style="{StaticResource TitleBarPopupButton}" HorizontalAlignment="Stretch"
+                                Margin="0,5,0,0"
+                                auto:AutomationProperties.Name="在外部浏览器打开"/>
+                        <Button x:Name="BtnLogs" Content="日志目录" Click="OnOpenLogs"
+                                Style="{StaticResource TitleBarPopupButton}" HorizontalAlignment="Stretch"
+                                Margin="0,5,0,0"
+                                ToolTip="打开日志目录（启动失败时先看这里）"
+                                auto:AutomationProperties.Name="打开日志目录"/>
+                        <CheckBox x:Name="StopOnClose" Content="退出时停止服务" IsChecked="True"
+                                  Style="{StaticResource DarkCheckBox}" Margin="5,9,0,2"
+                                  auto:AutomationProperties.Name="退出时停止服务"/>
+                    </StackPanel>
+                </Border>
+            </Popup>
+
+            <!-- 状态详情：完整多行文本装进只读 TextBox，可选中 / Ctrl+C / 一键复制。 -->
+            <Popup x:Name="StatusDetailPopup" PlacementTarget="{Binding ElementName=StatusText}"
+                   Placement="Top" VerticalOffset="-6"
+                   StaysOpen="False" AllowsTransparency="True">
+                <Border Style="{StaticResource TitleBarPopupSurface}" Width="560" Padding="12">
+                    <StackPanel>
+                        <TextBlock Text="状态详情" FontSize="13" FontWeight="SemiBold" Foreground="#E9EDF2"/>
+                        <Border Background="#15181C" CornerRadius="6" Margin="0,8,0,0" Padding="8">
+                            <TextBox x:Name="StatusDetailText" IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                     TextWrapping="Wrap" AcceptsReturn="True" BorderThickness="0"
+                                     Background="Transparent" Foreground="#C8CDD6" FontSize="12"
+                                     SelectionBrush="{StaticResource UpdateAccentBrush}"
+                                     CaretBrush="{StaticResource TitleTextBrush}"
+                                     MaxHeight="240" VerticalScrollBarVisibility="Auto"/>
+                        </Border>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                            <Button x:Name="BtnCopyStatus" Content="复制全部" Click="OnCopyStatusDetail"
+                                    Style="{StaticResource TitleBarPopupButton}" Margin="0,0,8,0"
+                                    auto:AutomationProperties.Name="复制状态详情"/>
+                            <Button Content="关闭" Click="OnCloseStatusDetail"
+                                    Style="{StaticResource TitleBarPopupButton}"
+                                    auto:AutomationProperties.Name="关闭状态详情"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
+        </Grid>
+
+        <!-- ==================== 底部状态栏 ====================
+             瘦身版：常驻只有「一行状态 + 详情 + ⋯」。
+             · 状态文本单行（多行诊断压成一行），全文进 ToolTip，并可点「详情」浮层查看/复制；
+               原先多行文本被 CharacterEllipsis 截断后再无第二条路径读到。
+             · 停止服务 / 外部浏览器打开 / 退出时停止服务 / 日志 收进「⋯」浮层（见下方 StatusMenu），
+               不再各占一颗常驻按钮；控件实例与名字不变，代码后置照旧。 -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource StatusBarBrush}"
+                BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,1,0,0" Padding="10,5">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="BtnStatusDetail" Content="详情" Visibility="Collapsed"
+                            Style="{StaticResource StatusAnchorButton}" Click="OnToggleStatusDetail"
+                            ToolTip="查看完整状态文本（可选中复制）"
+                            auto:AutomationProperties.Name="状态详情"/>
+                    <Button x:Name="BtnMore" Content="⋯" MinWidth="30"
+                            Style="{StaticResource StatusAnchorButton}" Click="OnToggleStatusMenu"
+                            ToolTip="更多操作：停止/启动服务 · 外部浏览器打开 · 退出时停止服务 · 日志"
+                            auto:AutomationProperties.Name="更多操作"/>
+                </StackPanel>
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#8C94A2"
+                           FontSize="12" Text="DSH Desktop — 正在检查服务…"
+                           TextTrimming="CharacterEllipsis" Margin="0,0,12,0"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ==================== 内容区：网页 + 集成 TUI ==================== -->
+        <Grid>
+            <wv2:WebView2 x:Name="Web"/>
+
+            <Border x:Name="TuiPanel" Background="#0E1114" Visibility="Collapsed">
+                <DockPanel LastChildFill="True">
+                    <Border DockPanel.Dock="Top" Background="{StaticResource TitleBarBrush}"
+                            BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,0,0,1"
+                            Padding="10,4">
+                        <DockPanel LastChildFill="True">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <!-- 高度不覆盖：用 StatusButton 自带的 24px，与状态栏那颗 ⋯/详情 一致 -->
+                                <Button x:Name="BtnTuiPaste" Content="粘贴" Click="OnTuiPaste"
+                                        Style="{StaticResource StatusButton}"
+                                        ToolTip="把剪贴板内容粘贴进终端（应用启用括号粘贴时自动加标记）"/>
+                                <Button x:Name="BtnTuiClear" Content="清屏" Click="OnTuiClear"
+                                        Style="{StaticResource StatusButton}"/>
+                                <Button x:Name="BtnTuiRestart" Content="重启终端" Click="OnTuiRestart"
+                                        Style="{StaticResource StatusButton}"/>
+                            </StackPanel>
+                            <TextBlock x:Name="TuiTitle" Text="TUI" VerticalAlignment="Center"
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="12"/>
+                        </DockPanel>
+                    </Border>
+                    <term:TerminalView x:Name="TuiView" Margin="2,2,2,4"/>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

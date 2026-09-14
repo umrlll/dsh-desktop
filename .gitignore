@@ -1,0 +1,87 @@
+# ============================================================
+# DSH Desktop — 版本控制排除规则
+# 目标：只纳入「桌面壳源码 + 测试 + 构建/签名配置」，
+#       排除构建产物、运行时载荷、本机缓存、用户数据，
+#       以及不进公开仓库的本地资料（docs/、plugin/）。
+# ============================================================
+
+# --- 不进本仓库的本地资料（文件保留在工作区，只是不纳入版本控制） ---
+#   docs/        ：设计/审计台账，多为内部推理与轮次记录，不适合公开
+#   plugin/      ：随本机维护的插件与图标工具，独立于桌面壳发布
+#   .dsh/skills/ ：本机配套技能（第三方技能包 + 个人工作流），与桌面壳无关
+docs/
+plugin/
+.dsh/skills/
+
+# --- .NET 构建产物（本仓库把输出重定向到 .build\） ---
+.build/
+[Bb]in/
+[Oo]bj/
+# WPF 构建会生成 *_wpftmp.csproj（临时工程），不应入库
+*_wpftmp.csproj
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# 本机 IDE 生成物：内含本机绝对发布路径（如 D:\dsh\publish），不随仓库分发
+**/Properties/PublishProfiles/
+
+# --- 发布产物与运行时载荷（体积大、可重建） ---
+publish/
+Release/
+DSHDesktop/runtime/
+DSHDesktop/.build/
+
+# --- 机密 / 本机凭据（防御性规则，即使当前工作区没有） ---
+.credentials.yaml
+.credentials.yml
+.dsh/.credentials.yaml
+*.pfx
+*.p12
+*.cer
+*.snk
+.env
+.env.*
+!.env.example
+appsettings.*.local.json
+secrets.json
+# 自签证书与签名脚本的密钥存放目录（见 scripts/signing/README.md）
+.signing/
+build/signing-keys/
+
+# --- 依赖目录（检出后按 lockfile 重装） ---
+node_modules/
+.pnpm-store/
+.dotnet-home/
+*.nupkg
+*.snupkg
+
+# --- 大型二进制归档（需要时从上游取） ---
+*.zip
+*.7z
+*.tar.gz
+
+# --- 智能体/编排工具的本地运行目录（含会话流水，非源码） ---
+.agent-teams/
+.baseline/
+.dsh/local/
+
+# --- 运行时用户数据：登录态与缓存，绝不可入库 ---
+**/DSHDesktop.exe.WebView2/
+**/EBWebView/
+*.log
+logs/
+*.tmp
+*.bak
+*.bak-*
+*.old-*
+.restore-tmp-*
+
+# --- 各类工具残留 ---
+.dsh-*/
+*.swp
+*~
+Thumbs.db
+desktop.ini

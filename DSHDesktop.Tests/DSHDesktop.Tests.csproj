@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>DSHDesktop.Tests</RootNamespace>
+    <AssemblyName>DSHDesktop.Tests</AssemblyName>
+    <!-- 版本随仓库根的 Directory.Build.targets（与主工程同源） -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <!--
+    直接链接被测源码，而不是 ProjectReference 到 DSHDesktop.csproj：
+    这三个组件只依赖 BCL（不碰 WPF / WebView2 / WinForms），因此测试工程可以编译成普通
+    net10.0 程序集——既不必把 WinExe 当引用，也不必为了 internal 可见性去改被测工程
+    （DesktopLog 是 internal static）。链接的是**同一份文件**，不是副本：
+    被测文件改动会立刻反映到测试里。
+  -->
+  <ItemGroup>
+    <Compile Include="..\DSHDesktop\Terminal\TerminalScreen.cs" Link="Linked\TerminalScreen.cs" />
+    <Compile Include="..\DSHDesktop\DesktopLog.cs" Link="Linked\DesktopLog.cs" />
+    <Compile Include="..\DSHDesktop\VersionUpdate.cs" Link="Linked\VersionUpdate.cs" />
+  </ItemGroup>
+
+</Project>

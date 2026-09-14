@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  解决方案级版本与产品元数据（版本号治理的单一来源）。
+
+  为什么用 Directory.Build.targets 而不是 .props：
+  .props 在项目体**之前**求值，项目里的 <Version> 会反过来覆盖这里算出的
+  VersionPrefix；.targets 在项目体**之后**求值，才能正确接管版本号。
+
+  为什么用内联任务拆版本号：
+  MSBuild 属性函数 $(VersionPrefix.Split('.')) 返回数组，而属性的「索引」语法
+  $(_Parts[0]) 只适用于 Item，取不到元素（实测会得到 '1.;.0.0' 这类字符串）。
+  因此用一个内联任务把 "1.2.3" 拆成三段返回。
+
+  用法：
+    # 本地（确定性，不需要 git 或 CI）
+    dotnet build DSHDesktop\DSHDesktop.csproj -c Release
+
+    # 发布（外部注入版本与构建号）
+    dotnet build DSHDesktop\DSHDesktop.csproj -c Release -p:VersionPrefix=1.2.3 -p:BuildId=202609141245
+-->
+<Project>
+
+  <PropertyGroup>
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">1.0.0</VersionPrefix>
+    <VersionSuffix Condition="'$(VersionSuffix)' == ''"></VersionSuffix>
+    <!-- 构建标识：建议用 CI 运行号或 yyyyMMddHHmm；只影响 FileVersion 第四段与 InformationalVersion -->
+    <BuildId Condition="'$(BuildId)' == ''">0</BuildId>
+    <_DshSemVer>$(VersionPrefix)</_DshSemVer>
+    <_DshSemVer Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</_DshSemVer>
+  </PropertyGroup>
+
+  <!-- 把 "1.2.3" / "1.2" / "1" 拆成定长三段 -->
+  <UsingTask TaskName="DshSplitVersion" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <VersionParameter ParameterType="System.String" Required="true" />
+      <Major ParameterType="System.String" Output="true" />
+      <Minor ParameterType="System.String" Output="true" />
+      <Patch ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var p = (VersionParameter ?? "1.0.0").Split('.');
+        Major = p.Length > 0 && p[0].Length > 0 ? p[0] : "1";
+        Minor = p.Length > 1 ? p[1] : "0";
+        Patch = p.Length > 2 ? p[2] : "0";
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <!-- 必须早于 AssemblyInfo 生成与编译：Version / AssemblyVersion / FileVersion 都在此确定 -->
+  <Target Name="DshStampVersion" BeforeTargets="GetAssemblyVersion;CoreCompile;GenerateAssemblyInfo">
+    <DshSplitVersion VersionParameter="$(VersionPrefix)">
+      <Output TaskParameter="Major" PropertyName="_DshV1" />
+      <Output TaskParameter="Minor" PropertyName="_DshV2" />
+      <Output TaskParameter="Patch" PropertyName="_DshV3" />
+    </DshSplitVersion>
+
+    <PropertyGroup>
+      <AssemblyVersion>$(_DshV1).$(_DshV2).0.0</AssemblyVersion>
+      <FileVersion>$(_DshV1).$(_DshV2).$(_DshV3).$(BuildId)</FileVersion>
+      <InformationalVersion Condition="'$(BuildId)' != '0'">$(_DshSemVer)+build.$(BuildId)</InformationalVersion>
+      <InformationalVersion Condition="'$(BuildId)' == '0'">$(_DshSemVer)</InformationalVersion>
+
+      <Company Condition="'$(Company)' == ''">DSH Desktop contributors</Company>
+      <Product Condition="'$(Product)' == ''">DSH Desktop</Product>
+      <Description Condition="'$(Description)' == ''">DeepSeek Harness 的 Windows 原生桌面客户端（WPF + WebView2）</Description>
+      <Copyright Condition="'$(Copyright)' == ''">Copyright (c) 2026 DSH Desktop contributors</Copyright>
+    </PropertyGroup>
+
+    <Message Importance="normal"
+             Text="DshStampVersion: Version=$(_DshSemVer) Assembly=$(AssemblyVersion) File=$(FileVersion)" />
+  </Target>
+
+</Project>

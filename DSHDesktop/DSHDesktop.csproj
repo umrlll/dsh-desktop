@@ -1,0 +1,149 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- 托盘图标使用 WinForms 的 NotifyIcon（WPF 没有内置托盘组件） -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DSHDesktop</RootNamespace>
+    <AssemblyName>DSHDesktop</AssemblyName>
+    <ApplicationIcon>DSH.ico</ApplicationIcon>
+    <!-- 版本与产品元数据集中在仓库根的 Directory.Build.targets（版本号治理单一来源） -->
+  </PropertyGroup>
+
+  <!-- UseWindowsForms 会给 ImplicitUsings 注入 System.Windows.Forms / System.Drawing，
+       会和 WPF 的 MessageBox 等类型冲突，这里去掉，改为按需全限定引用。 -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="DSH.ico" />
+    <None Update="DSH.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="dist\**" />
+    <Compile Remove="icon\**" />
+    <Compile Remove="publish\**" />
+    <EmbeddedResource Remove="dist\**" />
+    <EmbeddedResource Remove="icon\**" />
+    <EmbeddedResource Remove="publish\**" />
+    <None Remove="dist\**" />
+    <None Remove="icon\**" />
+    <None Remove="publish\**" />
+    <Page Remove="dist\**" />
+    <Page Remove="icon\**" />
+    <Page Remove="publish\**" />
+    <Compile Remove="runtime\**" />
+    <EmbeddedResource Remove="runtime\**" />
+    <None Remove="runtime\**" />
+    <Content Remove="runtime\**" />
+    <Page Remove="runtime\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!-- ================= 内置运行时（Node + dsh）自动打包 ================= -->
+  <PropertyGroup>
+    <!-- 项目内的运行时目录：首次发布时自动补齐 -->
+    <BundleRuntimeDir Condition="'$(BundleRuntimeDir)' == ''">$(MSBuildProjectDirectory)\runtime</BundleRuntimeDir>
+    <!-- Node 来源（可覆盖：dotnet publish -p:BundleNodeSource=...） -->
+    <BundleNodeSource Condition="'$(BundleNodeSource)' == ''">D:\nodejs\node.exe</BundleNodeSource>
+    <!-- dsh node_modules 来源（可覆盖：dotnet publish -p:BundleDshSource=...） -->
+    <BundleDshSource Condition="'$(BundleDshSource)' == ''">$(LOCALAPPDATA)\npm-cache\_npx\1e7f6d9597241db0\node_modules</BundleDshSource>
+    <BaseOutputPath>$(SolutionDir).build\$(MSBuildProjectName)\</BaseOutputPath>
+  </PropertyGroup>
+
+  <!-- 1) 首次发布：把 Node 与 dsh 补齐到项目内 runtime\（已存在则跳过，增量很快） -->
+  <Target Name="PrepareBundleRuntime" Condition="'$(SkipBundleRuntime)' != 'true'">
+    <MakeDir Directories="$(BundleRuntimeDir)\node;$(BundleRuntimeDir)\dsh" />
+    <Copy SourceFiles="$(BundleNodeSource)" DestinationFolder="$(BundleRuntimeDir)\node" SkipUnchangedFiles="true" Condition="!Exists('$(BundleRuntimeDir)\node\node.exe') And Exists('$(BundleNodeSource)')" />
+    <Exec Command="robocopy &quot;$(BundleDshSource)&quot; &quot;$(BundleRuntimeDir)\dsh\node_modules&quot; /E /XO /NFL /NDL /NJH /NJS /NP" IgnoreExitCode="true" Condition="!Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js') And Exists('$(BundleDshSource)')" />
+    <!-- 安装根 package.json：应用内“立即更新”在该目录执行 npm install，缺它会导致更新报错 -->
+    <Copy SourceFiles="$(BundleDshSource)\..\package.json" DestinationFolder="$(BundleRuntimeDir)\dsh" SkipUnchangedFiles="true" Condition="!Exists('$(BundleRuntimeDir)\dsh\package.json') And Exists('$(BundleDshSource)\..\package.json')" />
+    <!-- 来源没有 package.json 时，补一个最小的，保证更新可用 -->
+    <WriteLinesToFile File="$(BundleRuntimeDir)\dsh\package.json" Lines="{ &quot;private&quot;: true, &quot;dependencies&quot;: { &quot;@deepseek-ai/dsh&quot;: &quot;*&quot; } }" Overwrite="true" Condition="!Exists('$(BundleRuntimeDir)\dsh\package.json') And Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')" />
+    <Warning Text="[Bundle] 缺少 Node 来源：$(BundleNodeSource)" Condition="!Exists('$(BundleRuntimeDir)\node\node.exe')" />
+    <Warning Text="[Bundle] 缺少 dsh 来源：$(BundleDshSource)" Condition="!Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')" />
+  </Target>
+
+  <!-- 2) 发布后：把 runtime\ 一并拷入 publish 输出目录 -->
+  <Target Name="CopyBundleRuntime" AfterTargets="Publish" DependsOnTargets="PrepareBundleRuntime" Condition="'$(SkipBundleRuntime)' != 'true'">
+    <Exec Command="robocopy &quot;$(BundleRuntimeDir)&quot; &quot;$(PublishDir)runtime&quot; /E /XO /NFL /NDL /NJH /NJS /NP" IgnoreExitCode="true" />
+    <Warning Text="[Bundle] 内置运行时缺失，publish 未包含 Node/dsh。" Condition="!Exists('$(PublishDir)runtime\node\node.exe')" />
+    <Message Importance="high" Text="[Bundle] 内置运行时已打包到 $(PublishDir)runtime" />
+  </Target>
+
+  <!-- ================= 可选：把打包机上已装的 profile 插件内置集成 =================
+       发布时加 -p:BundleProfilePlugins=true，就会把某个 profile 的插件（清单 + 扁平
+       node_modules）放进 runtime\profile-seed\；目标机器首次启动且该 profile 不存在时
+       由 ProfileSeed 铺开，于是那些插件是"内置"的，不用再装。
+
+       可调：
+         -p:BundleProfilePluginsSource="C:\Users\me\.dsh\profiles\web"   换个来源 profile
+         -p:BundleProfilePluginsExclude="dsh-context;zod"                 不带某些顶层包 -->
+  <PropertyGroup>
+    <BundleProfilePlugins Condition="'$(BundleProfilePlugins)' == ''">false</BundleProfilePlugins>
+    <BundleProfilePluginsSource Condition="'$(BundleProfilePluginsSource)' == ''">$(USERPROFILE)\.dsh\profiles\web</BundleProfilePluginsSource>
+    <BundleProfilePluginsExclude Condition="'$(BundleProfilePluginsExclude)' == ''"></BundleProfilePluginsExclude>
+  </PropertyGroup>
+
+  <Target Name="PreparePluginSeed" DependsOnTargets="PrepareBundleRuntime"
+          BeforeTargets="CopyBundleRuntime"
+          Condition="'$(SkipBundleRuntime)' != 'true' And '$(BundleProfilePlugins)' == 'true'">
+    <PropertyGroup>
+      <_SeedDir>$(BundleRuntimeDir)\profile-seed</_SeedDir>
+      <_SeedSourceReady Condition="Exists('$(BundleProfilePluginsSource)\package.json')">true</_SeedSourceReady>
+    </PropertyGroup>
+
+    <Warning Text="[Bundle] BundleProfilePlugins=true，但找不到 profile 清单：$(BundleProfilePluginsSource)\package.json"
+             Condition="'$(_SeedSourceReady)' != 'true'" />
+
+    <ItemGroup Condition="'$(_SeedSourceReady)' == 'true'">
+      <_SeedExcludeDirs Include="$(BundleProfilePluginsExclude)" Condition="'$(BundleProfilePluginsExclude)' != ''" />
+    </ItemGroup>
+
+    <!-- 每次从零暂存：robocopy 的 /XD 会保护被排除的目录不被 /PURGE 删除，靠增量复制
+         无法让改小后的 BundleProfilePluginsExclude 生效。14MB 重铺一次可以忽略。 -->
+    <RemoveDir Directories="$(_SeedDir)" Condition="Exists('$(_SeedDir)')" />
+    <MakeDir Directories="$(_SeedDir)" Condition="'$(_SeedSourceReady)' == 'true'" />
+
+    <!-- 清单与用户覆盖层；不复制 cordis.yml（每次启动都会重写，固化它没有意义） -->
+    <Exec Condition="'$(_SeedSourceReady)' == 'true'"
+          Command="robocopy &quot;$(BundleProfilePluginsSource)&quot; &quot;$(_SeedDir)&quot; package.json pnpm-lock.yaml pnpm-workspace.yaml cordis.patch.yml /NFL /NDL /NJH /NJS /NP"
+          IgnoreExitCode="true" />
+
+    <!-- 扁平 node_modules。排除 pnpm 内部目录与本机 store 元数据：.modules.yaml 等记录的是
+         打包机的 store 绝对路径，带到别的机器会让 pnpm 判定 store 不一致而拒绝安装。 -->
+    <Exec Condition="'$(_SeedSourceReady)' == 'true' And Exists('$(BundleProfilePluginsSource)\node_modules')"
+          Command="robocopy &quot;$(BundleProfilePluginsSource)\node_modules&quot; &quot;$(_SeedDir)\node_modules&quot; /E /XD .pnpm .bin @(_SeedExcludeDirs) /XF .modules.yaml .package-map.json .pnpm-workspace-state-v1.json /NFL /NDL /NJH /NJS /NP"
+          IgnoreExitCode="true" />
+
+    <Message Importance="high" Text="[Bundle] 已内置集成插件：$(BundleProfilePluginsSource) → $(_SeedDir)"
+             Condition="'$(_SeedSourceReady)' == 'true'" />
+    <Warning Text="[Bundle] 内置集成的插件目录为空，请检查 BundleProfilePluginsSource。"
+             Condition="'$(_SeedSourceReady)' == 'true' And !Exists('$(_SeedDir)\node_modules')" />
+  </Target>
+
+  <!-- CopyBundleRuntime 是整个 runtime\ 目录一起发，所以关掉开关时还必须清掉上一次留下的
+       profile-seed，否则「不在发布时内置集成」这个选择会被残留目录架空。 -->
+  <Target Name="RemovePluginSeedWhenDisabled" BeforeTargets="CopyBundleRuntime"
+          Condition="'$(SkipBundleRuntime)' != 'true' And '$(BundleProfilePlugins)' != 'true'">
+    <PropertyGroup>
+      <_StaleSeed Condition="Exists('$(BundleRuntimeDir)\profile-seed')">true</_StaleSeed>
+    </PropertyGroup>
+    <RemoveDir Directories="$(BundleRuntimeDir)\profile-seed" Condition="'$(_StaleSeed)' == 'true'" />
+    <Message Importance="high" Text="[Bundle] 未启用插件内置集成，已清除残留的 profile-seed。"
+             Condition="'$(_StaleSeed)' == 'true'" />
+  </Target>
+
+</Project>

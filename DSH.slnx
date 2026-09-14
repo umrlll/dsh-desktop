@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="DSHDesktop/DSHDesktop.csproj" />
+  <Project Path="DSHDesktop.Tests/DSHDesktop.Tests.csproj" />
+</Solution>

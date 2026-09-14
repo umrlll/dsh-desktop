@@ -1,0 +1,134 @@
+name: CI
+
+# 说明：本仓库当前是本地检出、尚无远端。此工作流在你 push 到 GitHub 后才会真正运行。
+# 已在本机逐条验证的命令：restore / build / test（见 README §3–§4）。
+# 签名步骤仅在配置了 SIGNING_PFX_BASE64 Secret 时才执行，否则自动跳过。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  # 日常构建跳过把 Node/dsh 运行时拷进产物（发布/签名才需要）
+  SKIP_BUNDLE: '-p:SkipBundleRuntime=true'
+
+jobs:
+  build-and-test:
+    # WPF + WinForms + WebView2 只能在 Windows 上构建
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # 注意：secrets 不能出现在 step 级 `if:` 表达式里（GitHub 不支持），
+      # 因此提升到 job 级 env，由 step 的 `if: env.SIGNING_PFX_BASE64 != ''` 判断。
+      # 未配置该 Secret 时为空字符串，签名与产物上传步骤自动跳过。
+      SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+      SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # InformationalVersion 里带 git 短 SHA，需要完整历史/提交信息
+          fetch-depth: 0
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Show toolchain
+        shell: pwsh
+        run: dotnet --info
+
+      # Windows PowerShell 5.1 无 BOM 时按 ANSI 读脚本，会破坏中文注释与解析；
+      # 本仓库约定 scripts/**.ps1 一律 UTF-8 with BOM。
+      - name: Guard PowerShell scripts encoding (UTF-8 BOM)
+        shell: pwsh
+        run: |
+          $bad = @()
+          Get-ChildItem scripts -Recurse -Filter *.ps1 -ErrorAction SilentlyContinue | ForEach-Object {
+            $b = [IO.File]::ReadAllBytes($_.FullName)
+            if (-not ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) {
+              $bad += $_.FullName
+            }
+          }
+          if ($bad.Count -gt 0) {
+            Write-Host "以下脚本缺少 UTF-8 BOM（Windows PowerShell 5.1 会按 ANSI 读取而解析失败）："
+            $bad | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          Write-Host "所有 .ps1 均带 UTF-8 BOM ✅"
+
+      - name: Restore (per-project)
+        shell: pwsh
+        # 注意：解决方案级 `dotnet restore DSH.slnx` 在本仓库静默失败（既存问题），
+        # 因此这里始终按单个 csproj 还原。
+        run: |
+          dotnet restore DSHDesktop/DSHDesktop.csproj $env:SKIP_BUNDLE
+          dotnet restore DSHDesktop.Tests/DSHDesktop.Tests.csproj
+
+      - name: Build shell
+        shell: pwsh
+        run: |
+          dotnet build DSHDesktop/DSHDesktop.csproj -c Release --no-restore $env:SKIP_BUNDLE -v minimal
+
+      - name: Test
+        shell: pwsh
+        run: |
+          dotnet test DSHDesktop.Tests/DSHDesktop.Tests.csproj -c Release --no-restore -v minimal
+
+      # ---------- 发布 + 签名（可选，需配置 Secrets） ----------
+      - name: Compute version
+        id: ver
+        shell: pwsh
+        run: |
+          # 版本策略：VersionPrefix 由 tag 决定（无 tag 时用 1.0.0），BuildId 用运行号，保证单调递增
+          $prefix = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}'.TrimStart('v') } else { '1.0.0' }
+          $sha = (git rev-parse --short HEAD)
+          "prefix=$prefix"   >> $env:GITHUB_OUTPUT
+          "buildid=${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+          "sha=$sha"         >> $env:GITHUB_OUTPUT
+          Write-Host "版本 $prefix+${{ github.run_number }} (sha=$sha)"
+
+      - name: Publish (with runtime payload)
+        shell: pwsh
+        run: |
+          dotnet publish DSHDesktop/DSHDesktop.csproj -c Release -o publish `
+            -p:VersionPrefix=${{ steps.ver.outputs.prefix }} `
+            -p:BuildId=${{ steps.ver.outputs.buildid }}
+
+      - name: Sign artifacts (skipped when no signing secret)
+        if: ${{ env.SIGNING_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          try {
+            ./scripts/signing/Sign-Artifacts.ps1 -PfxPath $pfx -PfxPassword $env:SIGNING_PFX_PASSWORD `
+              -Path publish -IncludeManagedDlls
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload signed artifacts
+        if: ${{ env.SIGNING_PFX_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSHDesktop-${{ steps.ver.outputs.prefix }}-build${{ steps.ver.outputs.buildid }}
+          path: |
+            publish/DSHDesktop.exe
+            publish/DSHDesktop.dll
+          if-no-files-found: error
+          retention-days: 14
