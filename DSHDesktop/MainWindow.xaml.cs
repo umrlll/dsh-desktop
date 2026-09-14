@@ -109,7 +109,9 @@ public partial class MainWindow : Window
         ActivationCoordinator.SetHandler(
             () => Dispatcher.BeginInvoke(new Action(ActivateFromSecondInstance)));
         if (Environment.GetEnvironmentVariable("DSHDESKTOP_TUI_AUTOSTART") == "1")
-            Dispatcher.BeginInvoke(new Action(ShowTui), System.Windows.Threading.DispatcherPriority.Loaded);
+            // 蓄意不等待：窗口已在 Loaded，TUI 由 Dispatcher 在空闲优先级上补显示；
+            // 用 `_ =` 显式表达"丢弃返回值"的意图，而不是漏写 await。
+            _ = Dispatcher.BeginInvoke(new Action(ShowTui), System.Windows.Threading.DispatcherPriority.Loaded);
         ShowCurrentVersion();   // 标题栏版本先显示，WebView2 初始化失败也不留 "dsh v--"
         _ = TuiPrepTask;        // 预热：npm 全局 bin 目录 + 镜像源探测
         try
@@ -328,6 +330,17 @@ public partial class MainWindow : Window
         try
         {
             _serverProc = Process.Start(psi);
+            // Process.Start 的返回类型是 Process?（UseShellExecute=false 且启动失败时可能为 null）。
+            // 显式挡住：否则下面 8 处解引用会抛 NullReferenceException，而这个异常会一路冒到全局
+            // 未处理出口（App.xaml.cs 的 DispatcherUnhandledException → 弹框 + Shutdown(1)），
+            // 即"点一次启动服务失败"等于"整个应用退出"。返回前记日志并给出可执行的状态文案。
+            if (_serverProc == null)
+            {
+                DesktopLog.Error("启动 dsh 服务失败: Process.Start 返回 null（命令行或工作目录无效）");
+                SetStatus("启动 dsh 服务失败：进程未能创建，请检查 dsh 与工作目录。");
+                return;
+            }
+
             _startedByUs = true;
             RememberServerOwner();
         }
