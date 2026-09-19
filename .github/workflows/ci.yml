@@ -78,18 +78,18 @@ jobs:
         # 注意：解决方案级 `dotnet restore DSH.slnx` 在本仓库静默失败（既存问题），
         # 因此这里始终按单个 csproj 还原。
         run: |
-          dotnet restore DSHDesktop/DSHDesktop.csproj $env:SKIP_BUNDLE
-          dotnet restore DSHDesktop.Tests/DSHDesktop.Tests.csproj
+          dotnet restore src/DSHDesktop/DSHDesktop.csproj $env:SKIP_BUNDLE
+          dotnet restore tests/DSHDesktop.Tests/DSHDesktop.Tests.csproj
 
       - name: Build shell
         shell: pwsh
         run: |
-          dotnet build DSHDesktop/DSHDesktop.csproj -c Release --no-restore $env:SKIP_BUNDLE -v minimal
+          dotnet build src/DSHDesktop/DSHDesktop.csproj -c Release --no-restore $env:SKIP_BUNDLE -v minimal
 
       - name: Test
         shell: pwsh
         run: |
-          dotnet test DSHDesktop.Tests/DSHDesktop.Tests.csproj -c Release --no-restore -v minimal
+          dotnet test tests/DSHDesktop.Tests/DSHDesktop.Tests.csproj -c Release --no-restore -v minimal
 
       # ---------- 发布 + 签名（可选，需配置 Secrets） ----------
       - name: Compute version
@@ -107,7 +107,7 @@ jobs:
       - name: Publish shell (locked runtime payload is a separate release input)
         shell: pwsh
         run: |
-          dotnet publish DSHDesktop/DSHDesktop.csproj -c Release -o publish `
+          dotnet publish src/DSHDesktop/DSHDesktop.csproj -c Release -o publish `
             -p:VersionPrefix=${{ steps.ver.outputs.prefix }} `
             -p:BuildId=${{ steps.ver.outputs.buildid }} `
             -p:SkipBundleRuntime=true

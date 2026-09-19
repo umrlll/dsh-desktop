@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DSHDesktop.Core\DSHDesktop.Core.csproj" />
+    <ProjectReference Include="..\..\src\DSHDesktop.Core\DSHDesktop.Core.csproj" />
   </ItemGroup>
 
   <!--
@@ -28,11 +28,11 @@
     被测文件改动会立刻反映到测试里。
   -->
   <ItemGroup>
-    <Compile Include="..\DSHDesktop\Terminal\TerminalScreen.cs" Link="Linked\TerminalScreen.cs" />
-    <Compile Include="..\DSHDesktop\DesktopLog.cs" Link="Linked\DesktopLog.cs" />
-    <Compile Include="..\DSHDesktop\VersionUpdate.cs" Link="Linked\VersionUpdate.cs" />
-    <Compile Include="..\DSHDesktop\WebViewPolicy.cs" Link="Linked\WebViewPolicy.cs" />
-    <Compile Include="..\DSHDesktop\FrontendHealthProbe.cs" Link="Linked\FrontendHealthProbe.cs" />
+    <Compile Include="..\..\src\DSHDesktop\Terminal\TerminalScreen.cs" Link="Linked\TerminalScreen.cs" />
+    <Compile Include="..\..\src\DSHDesktop\DesktopLog.cs" Link="Linked\DesktopLog.cs" />
+    <Compile Include="..\..\src\DSHDesktop\VersionUpdate.cs" Link="Linked\VersionUpdate.cs" />
+    <Compile Include="..\..\src\DSHDesktop\WebViewPolicy.cs" Link="Linked\WebViewPolicy.cs" />
+    <Compile Include="..\..\src\DSHDesktop\FrontendHealthProbe.cs" Link="Linked\FrontendHealthProbe.cs" />
   </ItemGroup>
 
 </Project>

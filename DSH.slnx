@@ -1,6 +1,13 @@
 <Solution>
-  <Project Path="DSHDesktop.Core/DSHDesktop.Core.csproj" />
-  <Project Path="DSHDesktop.RuntimeTool/DSHDesktop.RuntimeTool.csproj" />
-  <Project Path="DSHDesktop/DSHDesktop.csproj" />
-  <Project Path="DSHDesktop.Tests/DSHDesktop.Tests.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/DSHDesktop.Core/DSHDesktop.Core.csproj" />
+    <Project Path="src/DSHDesktop/DSHDesktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DSHDesktop.Tests/DSHDesktop.Tests.csproj" />
+    <Project Path="tests/DSHDesktop.WebViewSmoke/DSHDesktop.WebViewSmoke.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/DSHDesktop.RuntimeTool/DSHDesktop.RuntimeTool.csproj" />
+  </Folder>
 </Solution>

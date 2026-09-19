@@ -21,17 +21,17 @@ internal static class SourceScanner
         while (dir != null)
         {
             if (File.Exists(Path.Combine(dir.FullName, "DSH.slnx"))
-                && Directory.Exists(Path.Combine(dir.FullName, "DSHDesktop")))
+                && Directory.Exists(Path.Combine(dir.FullName, "src", "DSHDesktop")))
                 return dir.FullName;
             dir = dir.Parent;
         }
         throw new InvalidOperationException(
-            "从 " + AppContext.BaseDirectory + " 向上找不到仓库根（同时含 DSH.slnx 与 DSHDesktop/）");
+            "从 " + AppContext.BaseDirectory + " 向上找不到仓库根（同时含 DSH.slnx 与 src/DSHDesktop/）");
     }
 
     /// <summary>被测工程的全部手写源码；排除构建产物目录。</summary>
     internal static IEnumerable<string> ProductSources()
-        => Directory.EnumerateFiles(Path.Combine(RepoRoot, "DSHDesktop"), "*.cs", SearchOption.AllDirectories)
+        => Directory.EnumerateFiles(Path.Combine(RepoRoot, "src", "DSHDesktop"), "*.cs", SearchOption.AllDirectories)
             .Where(p => !p.Contains(@"\obj\", StringComparison.Ordinal)
                         && !p.Contains(@"\.build\", StringComparison.Ordinal)
                         && !p.Contains(@"\runtime\", StringComparison.Ordinal)
@@ -39,7 +39,7 @@ internal static class SourceScanner
             .OrderBy(p => p, StringComparer.Ordinal);
 
     internal static string ProductFile(params string[] relativeParts)
-        => Path.Combine(new[] { Path.Combine(RepoRoot, "DSHDesktop") }.Concat(relativeParts).ToArray());
+        => Path.Combine(new[] { Path.Combine(RepoRoot, "src", "DSHDesktop") }.Concat(relativeParts).ToArray());
 
     /// <summary>只含代码的投影（注释与字面量替换成空格）。</summary>
     internal static string StrippedSource(string path) => StripCommentsAndStrings(File.ReadAllText(path));

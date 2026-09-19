@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DSHDesktop.Core\DSHDesktop.Core.csproj" />
+    <ProjectReference Include="..\..\src\DSHDesktop.Core\DSHDesktop.Core.csproj" />
   </ItemGroup>
 
 </Project>

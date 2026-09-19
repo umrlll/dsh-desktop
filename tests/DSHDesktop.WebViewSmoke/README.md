@@ -5,7 +5,7 @@ HTTP server. It passes only when navigation stays on the owned origin and the pr
 `FrontendHealthProbe` observes a visible interactive `#root` surface.
 
 ```powershell
-dotnet run --project DSHDesktop.WebViewSmoke\DSHDesktop.WebViewSmoke.csproj -c Release
+dotnet run --project tests\DSHDesktop.WebViewSmoke\DSHDesktop.WebViewSmoke.csproj -c Release
 ```
 
 The smoke deliberately stays outside the ordinary unit-test project: it requires Windows,

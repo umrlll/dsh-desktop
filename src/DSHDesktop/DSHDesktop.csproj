@@ -64,9 +64,9 @@
     <BundleArchitecture Condition="'$(BundleArchitecture)' == ''">x64</BundleArchitecture>
     <BundleProfileSchema Condition="'$(BundleProfileSchema)' == ''">1</BundleProfileSchema>
     <BundleRuntimeId Condition="'$(BundleRuntimeId)' == '' And '$(BundleDshVersion)' != '' And '$(BundleNodeVersion)' != '' And '$(BundlePnpmVersion)' != ''">dsh-$(BundleDshVersion)-$(BundlePlatform)-$(BundleArchitecture)-node-$(BundleNodeVersion)-pnpm-$(BundlePnpmVersion)</BundleRuntimeId>
-    <RuntimeManifestToolProject>$(MSBuildProjectDirectory)\..\DSHDesktop.RuntimeTool\DSHDesktop.RuntimeTool.csproj</RuntimeManifestToolProject>
-    <RuntimeManifestToolDll>$(MSBuildProjectDirectory)\..\DSHDesktop.RuntimeTool\bin\$(Configuration)\net10.0\DSHDesktop.RuntimeTool.dll</RuntimeManifestToolDll>
-    <BaseOutputPath>$(SolutionDir).build\$(MSBuildProjectName)\</BaseOutputPath>
+    <RuntimeManifestToolProject>$(MSBuildProjectDirectory)\..\..\tools\DSHDesktop.RuntimeTool\DSHDesktop.RuntimeTool.csproj</RuntimeManifestToolProject>
+    <RuntimeManifestToolDll>$(MSBuildProjectDirectory)\..\..\tools\DSHDesktop.RuntimeTool\bin\$(Configuration)\net10.0\DSHDesktop.RuntimeTool.dll</RuntimeManifestToolDll>
+    <BaseOutputPath>$(MSBuildProjectDirectory)\..\..\.build\$(MSBuildProjectName)\</BaseOutputPath>
   </PropertyGroup>
 
   <Target Name="ValidateBundleInputs" BeforeTargets="Publish" Condition="'$(SkipBundleRuntime)' != 'true'">
@@ -128,7 +128,7 @@
   <!-- ================= 可选：把打包机上已装的 profile 插件内置集成 =================
        发布时加 -p:BundleProfilePlugins=true，就会把某个 profile 的插件（清单 + 扁平
        node_modules）放进 runtime\profile-seed\；目标机器首次启动且该 profile 不存在时
-       由 ProfileSeed 铺开，于是那些插件是"内置"的，不用再装。
+       由 ProfileManager 铺开，于是那些插件是"内置"的，不用再装。
 
        可调：
          -p:BundleProfilePluginsSource="%USERPROFILE%\.dsh\profiles\web"  换个来源 profile

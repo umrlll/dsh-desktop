@@ -43,13 +43,13 @@ SBOM 和 Desktop 专用宿主适配。不可变运行时槽、失败回退、版
 
 ```powershell
 # 只构建壳（跳过把 Node/dsh 运行时拷进产物，日常开发用这条）
-dotnet build DSHDesktop\DSHDesktop.csproj -p:SkipBundleRuntime=true -v minimal
+dotnet build src\DSHDesktop\DSHDesktop.csproj -p:SkipBundleRuntime=true -v minimal
 
 # 只发布桌面壳（CI 当前使用此模式；不冒充完整发行包）
-dotnet publish DSHDesktop\DSHDesktop.csproj -c Release -p:SkipBundleRuntime=true
+dotnet publish src\DSHDesktop\DSHDesktop.csproj -c Release -p:SkipBundleRuntime=true
 
 # 完整运行时发布必须显式提供锁定来源与精确版本；以下变量应指向已准备的离线输入
-dotnet publish DSHDesktop\DSHDesktop.csproj -c Release `
+dotnet publish src\DSHDesktop\DSHDesktop.csproj -c Release `
   -p:BundleNodeSource="$nodeExe" -p:BundleNodeVersion=24.20.0 `
   -p:BundleDshSource="$dshNodeModules" -p:BundleDshVersion=0.1.5-alpha.1 `
   -p:BundlePnpmSource="$pnpmPrefix" -p:BundlePnpmVersion=11.27.0
@@ -65,7 +65,7 @@ dotnet publish DSHDesktop\DSHDesktop.csproj -c Release `
 `runtime\versions\<runtime-id>` 并原子写入 `runtime\active.json`；
 不会读取 `D:\nodejs`、随机 npx cache 或源码树下残留的本机 `runtime\`。
 
-运行：直接执行 `DSHDesktop\bin\...\DSHDesktop.exe`（或 `publish\DSHDesktop.exe`）。
+运行：直接执行 `.build\DSHDesktop\...\DSHDesktop.exe`（或 `publish\DSHDesktop.exe`）。
 首次启动会由 `ProfileManager` 初始化当前 profile 并完成环境探测，随后拉起本地服务并内嵌界面。
 在没有既有实例时，使用 `DSHDesktop.exe --safe-mode` 可直接以隔离的 `desktop-safe` profile 启动；
 已有实例可在窗口的重启菜单
@@ -96,7 +96,7 @@ dotnet publish DSHDesktop\DSHDesktop.csproj -c Release `
 默认 `1.0.0`（本地构建确定性，不依赖 git 或 CI）。发布时从外部注入：
 
 ```powershell
-dotnet build DSHDesktop\DSHDesktop.csproj -c Release `
+dotnet build src\DSHDesktop\DSHDesktop.csproj -c Release `
   -p:VersionPrefix=1.2.3 -p:BuildId=202609141245
 ```
 
@@ -125,7 +125,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/New-DevSigningCert.ps1 
 # 2) 签名产物
 powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
   -PfxPath .signing/dev.pfx -PfxPassword '<密码>' `
-  -Path 'DSHDesktop\.build\DSHDesktop\Release\net10.0-windows' -IncludeManagedDlls
+  -Path '.build\DSHDesktop\Release\net10.0-windows' -IncludeManagedDlls
 ```
 
 需要 `signtool`（来自 Windows SDK：`winget install --id Microsoft.WindowsSDK.10.0.26100 -e`）。
@@ -137,7 +137,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 ## 4. 测试
 
 ```powershell
-dotnet test DSHDesktop.Tests\DSHDesktop.Tests.csproj
+dotnet test tests\DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
 共 **157 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 260 个用例**，当前全绿。
@@ -147,7 +147,7 @@ dotnet test DSHDesktop.Tests\DSHDesktop.Tests.csproj
 Windows + WebView2 真实渲染冒烟（需要交互式桌面会话）：
 
 ```powershell
-dotnet run --project DSHDesktop.WebViewSmoke\DSHDesktop.WebViewSmoke.csproj -c Release
+dotnet run --project tests\DSHDesktop.WebViewSmoke\DSHDesktop.WebViewSmoke.csproj -c Release
 ```
 
 > 受限环境提示：测试宿主需要打开父进程句柄，在禁止进程句柄操作的沙箱下会以
@@ -158,32 +158,33 @@ dotnet run --project DSHDesktop.WebViewSmoke\DSHDesktop.WebViewSmoke.csproj -c R
 ## 5. 目录结构
 
 ```
-DSHDesktop/            应用源码（WPF 壳）
-  App.xaml(.cs)          启动、单实例互斥、全局异常出口
-  MainWindow.xaml(.cs)   主窗口组合根：标题栏、WebView、TUI 与用户动作接线
-  SingleInstanceIpc.cs   命名管道 + 命名事件双通道的「二次启动唤醒」
-  DesktopRecovery.cs     last-known-good 快照的提交换入与回滚
-  DesktopLog.cs          有界日志、脱敏、诊断包导出
-  PnpmSupport.cs         pnpm 探测与垫片       MarketSupport.cs  插件市场重启策略
-  VersionUpdate.cs       版本比较与更新探测
-  TrayController.cs      托盘图标、菜单命令、窗口显隐状态与资源释放
-  TrayMenu.cs            托盘菜单的深色渲染与图标字形
-  Terminal/              自研 ConPTY 终端（会话 / 屏幕模型 / 渲染视图）
-DSHDesktop.Core/       纯 net10.0 核心（服务、运行时槽/profile、更新/恢复状态与失败分类）
-DSHDesktop.RuntimeTool/ 生成/复验 manifest、验证并激活运行时槽的构建期工具
-DSHDesktop.Tests/      测试工程（xunit，项目引用 Core，并链接少量壳层纯 BCL 源码）
-DSHDesktop.WebViewSmoke/ 真实 WebView2 导航与交互面冒烟宿主
+src/                    产品源码
+  DSHDesktop/             WPF + WebView2 桌面壳
+    App.xaml(.cs)            启动、单实例互斥、全局异常出口
+    MainWindow.xaml(.cs)     主窗口组合根：标题栏、WebView、TUI 与用户动作接线
+    SingleInstanceIpc.cs     命名管道 + 命名事件双通道的「二次启动唤醒」
+    DesktopRecovery.cs       last-known-good 快照的提交换入与回滚
+    DesktopLog.cs            有界日志、脱敏、诊断包导出
+    PnpmSupport.cs           pnpm 探测与垫片；MarketSupport.cs 管插件市场重启策略
+    TrayController.cs        托盘图标、菜单命令、窗口显隐状态与资源释放
+    Terminal/                自研 ConPTY 终端（会话 / 屏幕模型 / 渲染视图）
+  DSHDesktop.Core/        纯 net10.0 核心（服务、运行时槽/profile、更新/恢复状态机）
+tests/                  自动化验证
+  DSHDesktop.Tests/       xUnit 单元与结构测试
+  DSHDesktop.WebViewSmoke/ 真实 WebView2 导航与交互面冒烟宿主
+tools/
+  DSHDesktop.RuntimeTool/ manifest 生成/复验与运行时槽激活工具
 eng/                    发布兼容矩阵及其 JSON Schema
-DSH.slnx               解决方案文件（当前解决方案级命令不可用，见 §3）
+scripts/signing/        自签代码签名脚本与说明
+.github/workflows/      CI（构建 + 测试 + 可选签名）
+DSH.slnx               按 src/tests/tools 分组的解决方案文件
 Directory.Build.targets 版本号与产品元数据的单一来源
-scripts/signing/       自签代码签名脚本与说明
-.github/workflows/     CI（构建 + 测试 + 可选签名）
 ```
 
 > 本仓库只包含**桌面壳本体**（源码、测试、构建与签名配置）。
 > 下列目录**不在版本控制内**，仅存在于本地工作区：
 > `docs/`（设计/审计台账）、`plugin/`（本机维护的插件与图标工具）、
-> `.dsh/skills/`（本机配套技能）、`DSHDesktop/Properties/PublishProfiles/`（IDE 生成的本机发布配置）。
+> `.dsh/skills/`（本机配套技能）、`src/DSHDesktop/Properties/PublishProfiles/`（IDE 生成的本机发布配置）。
 
 ---
 
@@ -192,7 +193,7 @@ scripts/signing/       自签代码签名脚本与说明
 | 能力 | 实现 | 备注 |
 |---|---|---|
 | 单实例 | `App.xaml.cs` + `SingleInstanceIpc.cs` | 二次启动**唤醒**已有实例而非另开窗口 |
-| 服务托管 | `DSHDesktop.Core/ServerHost.cs` + `MainWindow.xaml.cs` | 动态端口、进程生命周期、完整健康门与失败统一出口 |
+| 服务托管 | `src/DSHDesktop.Core/ServerHost.cs` + `MainWindow.xaml.cs` | 动态端口、进程生命周期、完整健康门与失败统一出口 |
 | 运行时槽 | Core `RuntimeManifest` + `RuntimeSlotManager` + RuntimeTool | 精确版本、逐文件 SHA-256、原子活动指针与一键回退模型 |
 | 终端 | `Terminal/ConPtySession.cs` + `TerminalScreen.cs` + `TerminalView.cs` | 自研，不依赖 `node-pty`；支持同步输出、备用屏、鼠标编码 |
 | 更新 | Core `UpdateCoordinator` + `RuntimeUpdateStager` + `VersionUpdate.cs` | 新槽 staging、manifest 复验、前端健康门、原子切换/回退和失败候选隔离 |

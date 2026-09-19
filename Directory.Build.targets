@@ -13,10 +13,10 @@
 
   用法：
     # 本地（确定性，不需要 git 或 CI）
-    dotnet build DSHDesktop\DSHDesktop.csproj -c Release
+    dotnet build src\DSHDesktop\DSHDesktop.csproj -c Release
 
     # 发布（外部注入版本与构建号）
-    dotnet build DSHDesktop\DSHDesktop.csproj -c Release -p:VersionPrefix=1.2.3 -p:BuildId=202609141245
+    dotnet build src\DSHDesktop\DSHDesktop.csproj -c Release -p:VersionPrefix=1.2.3 -p:BuildId=202609141245
 -->
 <Project>
 

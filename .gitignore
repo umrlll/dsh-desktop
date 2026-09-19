@@ -31,8 +31,8 @@ plugin/
 # --- 发布产物与运行时载荷（体积大、可重建） ---
 publish/
 Release/
-DSHDesktop/runtime/
-DSHDesktop/.build/
+src/DSHDesktop/runtime/
+src/DSHDesktop/.build/
 
 # --- 机密 / 本机凭据（防御性规则，即使当前工作区没有） ---
 .credentials.yaml

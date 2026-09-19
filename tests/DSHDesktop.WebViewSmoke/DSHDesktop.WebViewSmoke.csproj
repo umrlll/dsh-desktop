@@ -14,8 +14,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
-    <Compile Include="..\DSHDesktop\FrontendHealthProbe.cs" Link="Linked\FrontendHealthProbe.cs" />
-    <Compile Include="..\DSHDesktop\WebViewPolicy.cs" Link="Linked\WebViewPolicy.cs" />
+    <Compile Include="..\..\src\DSHDesktop\FrontendHealthProbe.cs" Link="Linked\FrontendHealthProbe.cs" />
+    <Compile Include="..\..\src\DSHDesktop\WebViewPolicy.cs" Link="Linked\WebViewPolicy.cs" />
   </ItemGroup>
 
 </Project>
