@@ -156,6 +156,66 @@ public class RuntimeSlotManagerTests
         Assert.True(Directory.Exists(damaged));
     }
 
+    [Fact]
+    public void PruneRejected_RetainsNewestEvidenceAndRemovesOlderCandidates()
+    {
+        using var temp = new TempDirectory();
+        var rejected = Path.Combine(temp.Path, "rejected");
+        var oldest = CreateRejected(rejected, "runtime-a-20260919000000000-abcdef12", -3);
+        var middle = CreateRejected(rejected, "runtime-b-20260919000000001-abcdef13", -2);
+        var newest = CreateRejected(rejected, "runtime-c-20260919000000002-abcdef14", -1);
+
+        var result = new RuntimeSlotManager(temp.Path).PruneRejected(
+            maximumRetained: 1,
+            minimumEvidenceAge: TimeSpan.Zero,
+            now: DateTimeOffset.UtcNow);
+
+        Assert.True(result.Success);
+        Assert.Equal(new[] { newest }, result.RetainedDirectories);
+        Assert.Equal(new[] { middle, oldest }, result.RemovedDirectories);
+        Assert.True(Directory.Exists(newest));
+        Assert.False(Directory.Exists(middle));
+        Assert.False(Directory.Exists(oldest));
+    }
+
+    [Fact]
+    public void PruneRejected_PreservesRecentEvidenceEvenWhenCountIsZero()
+    {
+        using var temp = new TempDirectory();
+        var rejected = Path.Combine(temp.Path, "rejected");
+        var recent = CreateRejected(rejected, "runtime-a-20260919000000000-abcdef12", -1);
+
+        var result = new RuntimeSlotManager(temp.Path).PruneRejected(
+            maximumRetained: 0,
+            minimumEvidenceAge: TimeSpan.FromHours(1),
+            now: DateTimeOffset.UtcNow);
+
+        Assert.True(result.Success);
+        Assert.Equal(new[] { recent }, result.RetainedDirectories);
+        Assert.True(Directory.Exists(recent));
+    }
+
+    [Fact]
+    public void PruneRejected_SkipsUnexpectedDirectoriesAndRejectsInvalidPolicy()
+    {
+        using var temp = new TempDirectory();
+        var rejected = Path.Combine(temp.Path, "rejected");
+        var unexpected = Path.Combine(rejected, "manual-evidence");
+        Directory.CreateDirectory(unexpected);
+
+        var skipped = new RuntimeSlotManager(temp.Path).PruneRejected(
+            maximumRetained: 0,
+            minimumEvidenceAge: TimeSpan.Zero,
+            now: DateTimeOffset.UtcNow);
+        var invalid = new RuntimeSlotManager(temp.Path).PruneRejected(maximumRetained: -1);
+
+        Assert.True(skipped.Success);
+        Assert.Equal(new[] { unexpected }, skipped.SkippedDirectories);
+        Assert.True(Directory.Exists(unexpected));
+        Assert.False(invalid.Success);
+        Assert.NotEmpty(invalid.Errors);
+    }
+
     internal static string CreateSlot(string runtimeRoot, string runtimeId, string content)
     {
         var slot = Path.Combine(runtimeRoot, RuntimeSlotManager.VersionsDirectoryName, runtimeId);
@@ -181,6 +241,14 @@ public class RuntimeSlotManagerTests
         var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content);
+    }
+
+    private static string CreateRejected(string root, string name, int minutesAgo)
+    {
+        var path = Path.Combine(root, name);
+        Directory.CreateDirectory(path);
+        Directory.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(minutesAgo));
+        return path;
     }
 
     internal sealed class TempDirectory : IDisposable

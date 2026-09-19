@@ -57,6 +57,17 @@ public sealed record RuntimeStoreMaintenanceResult(
     IReadOnlyList<string> Errors);
 
 /// <summary>
+/// Records conservative cleanup of rejected runtime candidates. Entries kept for the minimum
+/// evidence period are never removed merely because the count limit has been reached.
+/// </summary>
+public sealed record RuntimeRejectedMaintenanceResult(
+    bool Success,
+    IReadOnlyList<string> RetainedDirectories,
+    IReadOnlyList<string> RemovedDirectories,
+    IReadOnlyList<string> SkippedDirectories,
+    IReadOnlyList<string> Errors);
+
+/// <summary>
 /// Resolves and atomically switches immutable runtime slots under runtime/versions. A pointer is
 /// never updated until the candidate manifest and every declared file have been verified.
 /// </summary>
@@ -68,6 +79,10 @@ public sealed class RuntimeSlotManager
 
     private static readonly Regex SafeRuntimeId = new(
         @"^[0-9A-Za-z][0-9A-Za-z._-]{0,199}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex SafeRejectedDirectoryName = new(
+        @"^[0-9A-Za-z][0-9A-Za-z._-]{0,199}-\d{17}-[0-9a-f]{8}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly string _runtimeRoot;
@@ -405,6 +420,86 @@ public sealed class RuntimeSlotManager
             retained,
             removedSlots,
             removedStaging,
+            skipped,
+            errors);
+    }
+
+    /// <summary>
+    /// Bounds forensic storage for candidates previously quarantined after a failed health gate.
+    /// The newest <paramref name="maximumRetained"/> entries are retained, as is every normal
+    /// directory within <paramref name="minimumEvidenceAge"/>. Reparse points and unexpected
+    /// names are never deleted automatically.
+    /// </summary>
+    public RuntimeRejectedMaintenanceResult PruneRejected(
+        int maximumRetained = 3,
+        TimeSpan? minimumEvidenceAge = null,
+        DateTimeOffset? now = null)
+    {
+        var retained = new List<string>();
+        var removed = new List<string>();
+        var skipped = new List<string>();
+        var errors = new List<string>();
+        var age = minimumEvidenceAge ?? TimeSpan.FromDays(7);
+        if (maximumRetained < 0)
+        {
+            errors.Add("The rejected runtime retention count cannot be negative.");
+            return new RuntimeRejectedMaintenanceResult(false, retained, removed, skipped, errors);
+        }
+        if (age < TimeSpan.Zero)
+        {
+            errors.Add("The rejected runtime evidence age cannot be negative.");
+            return new RuntimeRejectedMaintenanceResult(false, retained, removed, skipped, errors);
+        }
+
+        var rejectedRoot = Path.Combine(_runtimeRoot, "rejected");
+        var candidates = new List<DirectoryInfo>();
+        try
+        {
+            if (!Directory.Exists(rejectedRoot))
+                return new RuntimeRejectedMaintenanceResult(true, retained, removed, skipped, errors);
+            foreach (var directory in Directory.EnumerateDirectories(rejectedRoot))
+            {
+                var info = new DirectoryInfo(directory);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0
+                    || !SafeRejectedDirectoryName.IsMatch(info.Name))
+                {
+                    skipped.Add(directory);
+                    continue;
+                }
+                candidates.Add(info);
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add("Unable to enumerate rejected runtime candidates: " + ex.Message);
+            return new RuntimeRejectedMaintenanceResult(false, retained, removed, skipped, errors);
+        }
+
+        var cutoff = (now ?? DateTimeOffset.UtcNow).UtcDateTime - age;
+        foreach (var candidate in candidates.OrderByDescending(entry => entry.LastWriteTimeUtc)
+                     .ThenByDescending(entry => entry.Name, StringComparer.Ordinal)
+                     .Select((entry, index) => (entry, index)))
+        {
+            if (candidate.index < maximumRetained || candidate.entry.LastWriteTimeUtc > cutoff)
+            {
+                retained.Add(candidate.entry.FullName);
+                continue;
+            }
+            try
+            {
+                Directory.Delete(candidate.entry.FullName, recursive: true);
+                removed.Add(candidate.entry.FullName);
+            }
+            catch (Exception ex)
+            {
+                errors.Add("Unable to delete rejected runtime candidate " + candidate.entry.Name + ": " + ex.Message);
+            }
+        }
+
+        return new RuntimeRejectedMaintenanceResult(
+            errors.Count == 0,
+            retained,
+            removed,
             skipped,
             errors);
     }
