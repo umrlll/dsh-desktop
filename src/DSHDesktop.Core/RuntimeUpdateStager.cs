@@ -34,7 +34,8 @@ public sealed record RuntimeUpdateStageResult(
     RuntimeUpdateStageStatus Status,
     string? RuntimeId = null,
     string? SlotDirectory = null,
-    string? Error = null)
+    string? Error = null,
+    string? MaintenanceWarning = null)
 {
     public bool Success => Status is RuntimeUpdateStageStatus.Activated
         or RuntimeUpdateStageStatus.ActivatedExisting;
@@ -151,16 +152,18 @@ public sealed class RuntimeUpdateStager
                 }
 
                 var existingActivation = slots.Activate(runtimeId);
-                return existingActivation.Success
-                    ? new RuntimeUpdateStageResult(
-                        RuntimeUpdateStageStatus.ActivatedExisting,
-                        runtimeId,
-                        candidateSlot)
-                    : new RuntimeUpdateStageResult(
+                if (!existingActivation.Success)
+                    return new RuntimeUpdateStageResult(
                         RuntimeUpdateStageStatus.ActivationFailed,
                         runtimeId,
                         candidateSlot,
                         existingActivation.Error);
+                var existingMaintenanceWarning = DescribeMaintenance(slots.PruneInactiveAndStaging());
+                return new RuntimeUpdateStageResult(
+                    RuntimeUpdateStageStatus.ActivatedExisting,
+                    runtimeId,
+                    candidateSlot,
+                    MaintenanceWarning: existingMaintenanceWarning);
             }
 
             staging = Path.Combine(stagingRoot, runtimeId + "-" + Guid.NewGuid().ToString("N"));
@@ -207,13 +210,18 @@ public sealed class RuntimeUpdateStager
             Directory.Move(staging, candidateSlot);
             staging = null;
             var activation = slots.Activate(runtimeId);
-            return activation.Success
-                ? new RuntimeUpdateStageResult(RuntimeUpdateStageStatus.Activated, runtimeId, candidateSlot)
-                : new RuntimeUpdateStageResult(
+            if (!activation.Success)
+                return new RuntimeUpdateStageResult(
                     RuntimeUpdateStageStatus.ActivationFailed,
                     runtimeId,
                     candidateSlot,
                     activation.Error);
+            var activatedMaintenanceWarning = DescribeMaintenance(slots.PruneInactiveAndStaging());
+            return new RuntimeUpdateStageResult(
+                RuntimeUpdateStageStatus.Activated,
+                runtimeId,
+                candidateSlot,
+                MaintenanceWarning: activatedMaintenanceWarning);
         }
         catch (OperationCanceledException)
         {
@@ -349,4 +357,10 @@ public sealed class RuntimeUpdateStager
     private static string DescribeIssues(IEnumerable<RuntimeManifestIssue> issues)
         => string.Join("；", issues.Take(5).Select(issue =>
             issue.Code + (issue.Path == null ? string.Empty : "(" + issue.Path + ")")));
+
+    private static string? DescribeMaintenance(RuntimeStoreMaintenanceResult result)
+        => result.Success
+            ? null
+            : "运行时槽清理未完成（已保留活动槽）："
+                + string.Join("；", result.Errors.Take(3));
 }

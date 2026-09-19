@@ -105,6 +105,57 @@ public class RuntimeSlotManagerTests
         Assert.False(manager.QuarantineInactive("runtime-a").Success);
     }
 
+    [Fact]
+    public void PruneInactiveAndStaging_RetainsActiveAndRollbackSlots()
+    {
+        using var temp = new TempDirectory();
+        var manager = new RuntimeSlotManager(temp.Path);
+        CreateSlot(temp.Path, "runtime-a", "a");
+        CreateSlot(temp.Path, "runtime-b", "b");
+        CreateSlot(temp.Path, "runtime-c", "c");
+        Assert.True(manager.Activate("runtime-a").Success);
+        Assert.True(manager.Activate("runtime-b").Success);
+
+        var stagingRoot = Path.Combine(temp.Path, RuntimeSlotManager.StagingDirectoryName);
+        var stale = Path.Combine(stagingRoot, "stale-install");
+        var recent = Path.Combine(stagingRoot, "recent-install");
+        Directory.CreateDirectory(stale);
+        Directory.CreateDirectory(recent);
+        Directory.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddHours(-2));
+
+        var result = manager.PruneInactiveAndStaging(
+            TimeSpan.FromHours(1),
+            DateTimeOffset.UtcNow);
+
+        Assert.True(result.Success);
+        Assert.Equal(new[] { "runtime-b", "runtime-a" }, result.RetainedRuntimeIds);
+        Assert.Equal(new[] { "runtime-c" }, result.RemovedRuntimeIds);
+        Assert.False(Directory.Exists(Path.Combine(
+            temp.Path, RuntimeSlotManager.VersionsDirectoryName, "runtime-c")));
+        Assert.False(Directory.Exists(stale));
+        Assert.True(Directory.Exists(recent));
+        Assert.Equal("runtime-b", manager.ResolveActive().Selection?.ActiveRuntimeId);
+        Assert.Equal("runtime-a", manager.ResolveActive().Selection?.PreviousRuntimeId);
+    }
+
+    [Fact]
+    public void PruneInactiveAndStaging_KeepsDamagedSlotsForManualRecovery()
+    {
+        using var temp = new TempDirectory();
+        var manager = new RuntimeSlotManager(temp.Path);
+        CreateSlot(temp.Path, "runtime-a", "a");
+        var damaged = CreateSlot(temp.Path, "runtime-b", "b");
+        File.WriteAllText(Path.Combine(damaged, "node", "node.exe"), "tampered");
+        Assert.True(manager.Activate("runtime-a").Success);
+
+        var result = manager.PruneInactiveAndStaging();
+
+        Assert.True(result.Success);
+        Assert.Empty(result.RemovedRuntimeIds);
+        Assert.Contains(damaged, result.SkippedDirectories);
+        Assert.True(Directory.Exists(damaged));
+    }
+
     internal static string CreateSlot(string runtimeRoot, string runtimeId, string content)
     {
         var slot = Path.Combine(runtimeRoot, RuntimeSlotManager.VersionsDirectoryName, runtimeId);

@@ -44,6 +44,19 @@ public sealed record RuntimeSlotQuarantineResult(
     string? Error = null);
 
 /// <summary>
+/// Records a conservative runtime-store cleanup. Only slots whose manifest fully verifies may be
+/// deleted; unknown, damaged, recent staging, and reparse-point directories are retained for
+/// manual recovery and evidence collection.
+/// </summary>
+public sealed record RuntimeStoreMaintenanceResult(
+    bool Success,
+    IReadOnlyList<string> RetainedRuntimeIds,
+    IReadOnlyList<string> RemovedRuntimeIds,
+    IReadOnlyList<string> RemovedStagingDirectories,
+    IReadOnlyList<string> SkippedDirectories,
+    IReadOnlyList<string> Errors);
+
+/// <summary>
 /// Resolves and atomically switches immutable runtime slots under runtime/versions. A pointer is
 /// never updated until the candidate manifest and every declared file have been verified.
 /// </summary>
@@ -51,6 +64,7 @@ public sealed class RuntimeSlotManager
 {
     public const string SelectionFileName = "active.json";
     public const string VersionsDirectoryName = "versions";
+    public const string StagingDirectoryName = "staging";
 
     private static readonly Regex SafeRuntimeId = new(
         @"^[0-9A-Za-z][0-9A-Za-z._-]{0,199}$",
@@ -235,6 +249,164 @@ public sealed class RuntimeSlotManager
         {
             return new RuntimeSlotQuarantineResult(false, Error: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Retains the active verified slot and one verified rollback slot. All other verified,
+    /// inactive slots may be removed. Staging directories are removed only after their minimum
+    /// age; recent work and anything that is not a normal directory is left untouched.
+    /// </summary>
+    public RuntimeStoreMaintenanceResult PruneInactiveAndStaging(
+        TimeSpan? minimumStagingAge = null,
+        DateTimeOffset? now = null)
+    {
+        var retained = new List<string>();
+        var removedSlots = new List<string>();
+        var removedStaging = new List<string>();
+        var skipped = new List<string>();
+        var errors = new List<string>();
+        var age = minimumStagingAge ?? TimeSpan.FromHours(1);
+        if (age < TimeSpan.Zero)
+        {
+            errors.Add("staging 保留时间不能为负数。");
+            return new RuntimeStoreMaintenanceResult(false, retained, removedSlots, removedStaging, skipped, errors);
+        }
+
+        var active = ResolveActive(verifyFiles: true);
+        if (!active.IsReady || active.Selection == null)
+        {
+            errors.Add("活动运行时未通过完整性校验，拒绝执行清理。");
+            return new RuntimeStoreMaintenanceResult(false, retained, removedSlots, removedStaging, skipped, errors);
+        }
+
+        var selection = active.Selection;
+        var versionsRoot = Path.Combine(_runtimeRoot, VersionsDirectoryName);
+        var verified = new List<(string RuntimeId, DateTime LastWriteUtc)>();
+        try
+        {
+            if (Directory.Exists(versionsRoot))
+            {
+                foreach (var directory in Directory.EnumerateDirectories(versionsRoot))
+                {
+                    var info = new DirectoryInfo(directory);
+                    var runtimeId = info.Name;
+                    if (!IsSafeRuntimeId(runtimeId))
+                    {
+                        skipped.Add(directory);
+                        continue;
+                    }
+                    if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        skipped.Add(directory);
+                        continue;
+                    }
+
+                    var resolution = Resolve(runtimeId, verifyFiles: true);
+                    if (!resolution.IsReady)
+                    {
+                        skipped.Add(directory);
+                        continue;
+                    }
+                    verified.Add((runtimeId, info.LastWriteTimeUtc));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add("枚举运行时槽失败：" + ex.Message);
+            return new RuntimeStoreMaintenanceResult(false, retained, removedSlots, removedStaging, skipped, errors);
+        }
+
+        var activeEntry = verified.FirstOrDefault(slot =>
+            string.Equals(slot.RuntimeId, selection.ActiveRuntimeId, StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(activeEntry.RuntimeId))
+        {
+            errors.Add("活动运行时槽未出现在已验证槽列表中，拒绝执行清理。");
+            return new RuntimeStoreMaintenanceResult(false, retained, removedSlots, removedStaging, skipped, errors);
+        }
+
+        retained.Add(selection.ActiveRuntimeId);
+        var rollback = verified.FirstOrDefault(slot =>
+            !string.Equals(slot.RuntimeId, selection.ActiveRuntimeId, StringComparison.Ordinal)
+            && string.Equals(slot.RuntimeId, selection.PreviousRuntimeId, StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(rollback.RuntimeId))
+        {
+            rollback = verified
+                .Where(slot => !string.Equals(slot.RuntimeId, selection.ActiveRuntimeId, StringComparison.Ordinal))
+                .OrderByDescending(slot => slot.LastWriteUtc)
+                .FirstOrDefault();
+        }
+
+        var rollbackId = string.IsNullOrWhiteSpace(rollback.RuntimeId) ? null : rollback.RuntimeId;
+        if (rollbackId != null) retained.Add(rollbackId);
+        if (!string.Equals(selection.PreviousRuntimeId, rollbackId, StringComparison.Ordinal))
+        {
+            try
+            {
+                selection = selection with { PreviousRuntimeId = rollbackId };
+                WriteSelection(selection);
+            }
+            catch (Exception ex)
+            {
+                errors.Add("更新回退槽指针失败，未删除任何槽：" + ex.Message);
+                return new RuntimeStoreMaintenanceResult(false, retained, removedSlots, removedStaging, skipped, errors);
+            }
+        }
+
+        foreach (var slot in verified)
+        {
+            if (retained.Contains(slot.RuntimeId, StringComparer.Ordinal)) continue;
+            var directory = Path.Combine(versionsRoot, slot.RuntimeId);
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+                removedSlots.Add(slot.RuntimeId);
+            }
+            catch (Exception ex)
+            {
+                errors.Add("删除旧运行时槽 " + slot.RuntimeId + " 失败：" + ex.Message);
+            }
+        }
+
+        var stagingRoot = Path.Combine(_runtimeRoot, StagingDirectoryName);
+        var cutoff = (now ?? DateTimeOffset.UtcNow).UtcDateTime - age;
+        try
+        {
+            if (Directory.Exists(stagingRoot))
+            {
+                foreach (var directory in Directory.EnumerateDirectories(stagingRoot))
+                {
+                    var info = new DirectoryInfo(directory);
+                    if ((info.Attributes & FileAttributes.ReparsePoint) != 0
+                        || info.LastWriteTimeUtc > cutoff)
+                    {
+                        skipped.Add(directory);
+                        continue;
+                    }
+                    try
+                    {
+                        Directory.Delete(directory, recursive: true);
+                        removedStaging.Add(directory);
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add("删除过期 staging 目录失败：" + ex.Message);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add("枚举 staging 目录失败：" + ex.Message);
+        }
+
+        return new RuntimeStoreMaintenanceResult(
+            errors.Count == 0,
+            retained,
+            removedSlots,
+            removedStaging,
+            skipped,
+            errors);
     }
 
     private void WriteSelection(RuntimeSlotSelection selection)

@@ -144,6 +144,34 @@ public class RuntimeUpdateStagerTests
     }
 
     [Fact]
+    public async Task StageAndActivate_PrunesVerifiedSlotsBeyondActiveAndRollback()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var sourceRoot = Path.Combine(temp.Path, "installed-runtime");
+        var writableRoot = Path.Combine(temp.Path, "writable-runtime");
+        var sourceSlot = RuntimeSlotManagerTests.CreateSlot(sourceRoot, "runtime-a", "original");
+        RuntimeSlotManagerTests.CreateSlot(writableRoot, "runtime-old", "old");
+
+        var result = await new RuntimeUpdateStager(writableRoot).StageAndActivateAsync(
+            sourceSlot,
+            Path.Combine(sourceSlot, RuntimeManifest.FileName),
+            "0.1.6-alpha.1",
+            (context, _) =>
+            {
+                WriteVersion(context.DshInstallDirectory, "0.1.6-alpha.1");
+                return Task.FromResult(RuntimeUpdateInstallResult.Ok());
+            });
+
+        Assert.Equal(RuntimeUpdateStageStatus.Activated, result.Status);
+        Assert.Null(result.MaintenanceWarning);
+        Assert.False(Directory.Exists(Path.Combine(
+            writableRoot, RuntimeSlotManager.VersionsDirectoryName, "runtime-old")));
+        Assert.True(Directory.Exists(Path.Combine(
+            writableRoot, RuntimeSlotManager.VersionsDirectoryName, "runtime-a")));
+        Assert.True(Directory.Exists(result.SlotDirectory));
+    }
+
+    [Fact]
     public async Task StageAndActivate_RejectsDifferentBuildWithSameBaselineRuntimeId()
     {
         using var temp = new RuntimeSlotManagerTests.TempDirectory();

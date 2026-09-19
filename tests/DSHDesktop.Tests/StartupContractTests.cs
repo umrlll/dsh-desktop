@@ -141,6 +141,9 @@ public class StartupContractTests
         Assert.Contains("current.IsVerified", body);
         Assert.Contains("new RuntimeUpdateStager(Runtime.WritableRuntimeRoot)", body);
         Assert.Contains("context.DshInstallDirectory", body);
+        var stager = File.ReadAllText(Path.Combine(
+            SourceScanner.RepoRoot, "src", "DSHDesktop.Core", "RuntimeUpdateStager.cs"));
+        Assert.Contains("slots.PruneInactiveAndStaging()", stager);
         Assert.DoesNotContain("current.InstallRoot", body);
         Assert.DoesNotContain("UpdateBackup.", source);
         Assert.Contains("WaitForFrontendHealthAsync", source);

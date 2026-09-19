@@ -194,9 +194,9 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 |---|---|---|
 | 单实例 | `App.xaml.cs` + `SingleInstanceIpc.cs` | 二次启动**唤醒**已有实例而非另开窗口 |
 | 服务托管 | `src/DSHDesktop.Core/ServerHost.cs` + `MainWindow.xaml.cs` | 动态端口、进程生命周期、完整健康门与失败统一出口 |
-| 运行时槽 | Core `RuntimeManifest` + `RuntimeSlotManager` + RuntimeTool | 精确版本、逐文件 SHA-256、原子活动指针与一键回退模型 |
+| 运行时槽 | Core `RuntimeManifest` + `RuntimeSlotManager` + RuntimeTool | 精确版本、逐文件 SHA-256、原子活动指针、一个已验证回退槽与保守清理模型 |
 | 终端 | `Terminal/ConPtySession.cs` + `TerminalScreen.cs` + `TerminalView.cs` | 自研，不依赖 `node-pty`；支持同步输出、备用屏、鼠标编码 |
-| 更新 | Core `UpdateCoordinator` + `RuntimeUpdateStager` + `VersionUpdate.cs` | 新槽 staging、manifest 复验、前端健康门、原子切换/回退和失败候选隔离 |
+| 更新 | Core `UpdateCoordinator` + `RuntimeUpdateStager` + `VersionUpdate.cs` | 新槽 staging、manifest 复验、前端健康门、原子切换/回退、失败候选隔离与过期 staging 清理 |
 | 恢复 | Core `RecoveryCoordinator` + `DesktopRecovery.cs` + 恢复助手 | Core 管自动重启/人工接管策略；壳层管理快照、插件禁用与回滚 |
 | 托盘 | `TrayController.cs` + `TrayMenu.cs` | 控制器管理显隐状态、动态菜单、图标句柄和确定性释放 |
 | 日志 | `DesktopLog.cs` | 配额清理 + 脱敏（长 hex/base64 会被整体遮蔽）+ 诊断 zip |

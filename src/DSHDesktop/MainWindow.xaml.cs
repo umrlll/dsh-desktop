@@ -2379,6 +2379,8 @@ public partial class MainWindow : Window
             var result = await RunUpdateAsync(target);
             if (result.Success)
             {
+                if (!string.IsNullOrWhiteSpace(result.MaintenanceWarning))
+                    DesktopLog.Warn(result.MaintenanceWarning);
                 Runtime.Invalidate();
                 ShowCurrentVersion();
                 SetStatus("候选槽已激活，正在执行前端健康验证…");
