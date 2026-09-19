@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using DSHDesktop.Core;
 
 namespace DSHDesktop;
 
@@ -83,6 +84,7 @@ internal static class DesktopLog
                 _dir = dir;
                 PurgeExpired(dir);
                 EnforceDirectoryCap(dir);
+                MaintainDiagnosticArchives(dir);
                 _initialized = true;
                 Write(LogLevel.Info, "=== DSH Desktop 启动 " + BuildHeader() + " ===");
             }
@@ -264,6 +266,20 @@ internal static class DesktopLog
     {
         try { return System.IO.Directory.GetFiles(dir); }
         catch { return Array.Empty<string>(); }
+    }
+
+    private static void MaintainDiagnosticArchives(string dir)
+    {
+        try
+        {
+            var result = DiagnosticArchiveRetention.Prune(dir);
+            if (!result.Success)
+                Warn("Diagnostic archive maintenance did not finish: " + string.Join(", ", result.Errors.Take(3)));
+        }
+        catch (Exception ex)
+        {
+            DegradeWrite("Diagnostic archive maintenance failed: " + ex.Message);
+        }
     }
 
     // ---------- 降级 ----------
