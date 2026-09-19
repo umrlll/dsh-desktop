@@ -19,6 +19,7 @@ internal static class Program
                 "verify" => Verify(options),
                 "activate" => Activate(options),
                 "checksums" => Checksums(options),
+                "sbom" => Sbom(options),
                 "sign-release" => SignRelease(options),
                 _ => Usage(),
             };
@@ -111,6 +112,25 @@ internal static class Program
         return 0;
     }
 
+    private static int Sbom(IReadOnlyDictionary<string, string> options)
+    {
+        var root = Required(options, "root");
+        var output = Path.GetFullPath(Required(options, "output"));
+        var created = DateTimeOffset.Parse(
+            Required(options, "created-at"),
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind);
+        var optionsModel = new ReleaseSbomOptions(
+            Required(options, "name"),
+            Required(options, "version"),
+            new Uri(Required(options, "namespace"), UriKind.Absolute),
+            created);
+        var sbom = ReleaseSbom.Create(root, optionsModel, output);
+        sbom.Write(output);
+        Console.WriteLine($"runtime-manifest: wrote SPDX SBOM for {sbom.Files.Count} files to {output}");
+        return 0;
+    }
+
     private static void VerifyComponentVersions(string root, RuntimeManifestIdentity identity)
     {
         var node = Path.Combine(root, "node", OperatingSystem.IsWindows() ? "node.exe" : "node");
@@ -187,7 +207,7 @@ internal static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|sign-release --name value ...");
+        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|sbom|sign-release --name value ...");
         return 2;
     }
 }

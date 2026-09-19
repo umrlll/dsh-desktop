@@ -100,9 +100,11 @@ jobs:
           # 版本策略：VersionPrefix 由 tag 决定（无 tag 时用 1.0.0），BuildId 用运行号，保证单调递增
           $prefix = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}'.TrimStart('v') } else { '1.0.0' }
           $sha = (git rev-parse --short HEAD)
+          $createdAt = (git show -s --format=%cI HEAD)
           "prefix=$prefix"   >> $env:GITHUB_OUTPUT
           "buildid=${{ github.run_number }}" >> $env:GITHUB_OUTPUT
           "sha=$sha"         >> $env:GITHUB_OUTPUT
+          "createdat=$createdAt" >> $env:GITHUB_OUTPUT
           Write-Host "版本 $prefix+${{ github.run_number }} (sha=$sha)"
 
       - name: Publish shell (locked runtime payload is a separate release input)
@@ -126,6 +128,15 @@ jobs:
             Remove-Item $pfx -Force -ErrorAction SilentlyContinue
           }
 
+      - name: Generate SPDX SBOM
+        shell: pwsh
+        run: |
+          dotnet run --project tools/DSHDesktop.RuntimeTool/DSHDesktop.RuntimeTool.csproj -c Release --no-restore -- `
+            sbom --root publish --output publish/DSHDesktop.spdx.json `
+            --name DSHDesktop --version ${{ steps.ver.outputs.prefix }}+${{ steps.ver.outputs.buildid }} `
+            --namespace https://github.com/${{ github.repository }}/tree/${{ steps.ver.outputs.sha }} `
+            --created-at ${{ steps.ver.outputs.createdat }}
+
       - name: Generate release checksums
         shell: pwsh
         # Must run after optional Authenticode signing: SHA256SUMS describes the final bytes.
@@ -142,6 +153,7 @@ jobs:
           path: |
             publish/DSHDesktop.exe
             publish/DSHDesktop.dll
+            publish/DSHDesktop.spdx.json
             publish/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14

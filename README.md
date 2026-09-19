@@ -22,7 +22,7 @@ Chromium；桌面壳自身较小，完整发布载荷会另外携带锁定的 No
 | 签名 | **仅自签**：签名与时间戳成立，但**不消除 SmartScreen 警告**（见 §3） |
 | 定位 | 个人自用/实验；**不建议**在未审阅源码的情况下用于生产或分发 |
 
-已知缺口（尚未实施）：完整 CI 运行时输入、Portable ZIP、安装器、可信发行签名、SBOM 和 Desktop 专用宿主适配。CI 已在可选签名后为 shell 发布目录生成 `SHA256SUMS.txt`；可安装发布物仍待安装器与锁定 runtime 输入。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
+已知缺口（尚未实施）：完整 CI 运行时输入、Portable ZIP、安装器、可信发行签名和 Desktop 专用宿主适配。CI 已在可选签名后为 shell 发布目录生成 SPDX SBOM 与 `SHA256SUMS.txt`；可安装发布物仍待安装器与锁定 runtime 输入。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
 **已经落地**（见 §3、§6、§7）。
 
 ---
@@ -139,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 dotnet test tests\DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
-共 **206 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 309 个用例**，当前全绿。
+共 **209 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 312 个用例**，当前全绿。
 测试工程通过项目引用验证纯 `net10.0` 的 `DSHDesktop.Core`；仍属于 Windows 壳、但只依赖 BCL 的
 `TerminalScreen` / `DesktopLog` / `VersionUpdate` / WebView 安全与启动健康策略继续用源码链接测试。
 
@@ -209,11 +209,11 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 
 | 阶段 | 状态 | 实施内容 | 通过标准 |
 |---|---|---|---|
-| CI 验证基线 | 已有 | Windows 构建、309 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
+| CI 验证基线 | 已有 | Windows 构建、312 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
 | M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；已验签下载、安全原子解包、manifest 身份复验和候选槽接纳已形成单一更新入口；发布源配置模板/校验器已就绪，待提供真实信任根、端点和 UI 接线 | 独立 profile、更新、健康失败回退均可验证 |
 | M5-A Portable | 待实施 | CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入；生成 `win-x64` 完整发布目录和 Portable ZIP；上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
 | M5-B 安装器 | 待实施 | 首选 Inno Setup 生成按用户安装的 `Setup.exe`；统一 Desktop、runtime manifest 与安装器版本身份 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
-| M5-C 正式发布 | 待实施 | Authenticode 可信签名、RFC3161 时间戳、`SHA256SUMS.txt`、SBOM、NOTICE 与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
+| M5-C 正式发布 | 进行中 | CI 已生成 SPDX SBOM 与 `SHA256SUMS.txt`；待可信 Authenticode、RFC3161、完整运行时资产、NOTICE 审计与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
 
 发布门的简化顺序为：
 
