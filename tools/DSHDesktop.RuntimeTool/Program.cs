@@ -20,6 +20,7 @@ internal static class Program
                 "activate" => Activate(options),
                 "checksums" => Checksums(options),
                 "portable" => Portable(options),
+                "validate-input-lock" => ValidateInputLock(options),
                 "sbom" => Sbom(options),
                 "sign-release" => SignRelease(options),
                 _ => Usage(),
@@ -141,6 +142,15 @@ internal static class Program
         return 0;
     }
 
+    private static int ValidateInputLock(IReadOnlyDictionary<string, string> options)
+    {
+        var lockFile = ReleaseInputLock.Parse(File.ReadAllText(Required(options, "input")));
+        var matrix = CompatibilityMatrix.Load(Required(options, "matrix"));
+        lockFile.EnsureValidAgainst(matrix);
+        Console.WriteLine("runtime-manifest: release input lock validation passed");
+        return 0;
+    }
+
     private static void VerifyComponentVersions(string root, RuntimeManifestIdentity identity)
     {
         var node = Path.Combine(root, "node", OperatingSystem.IsWindows() ? "node.exe" : "node");
@@ -217,7 +227,7 @@ internal static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|portable|sbom|sign-release --name value ...");
+        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|portable|validate-input-lock|sbom|sign-release --name value ...");
         return 2;
     }
 }

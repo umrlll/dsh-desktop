@@ -17,7 +17,7 @@
       "channels": ["dev"],
       "publishable": false,
       "evidence": {
-        "unitTestCount": 316,
+        "unitTestCount": 319,
         "releaseBuild": "passed",
         "webViewSmoke": "passed",
         "fullDshStartup": "blocked-profile-dependency"
