@@ -140,7 +140,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 dotnet test tests\DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
-共 **175 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 278 个用例**，当前全绿。
+共 **179 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 282 个用例**，当前全绿。
 测试工程通过项目引用验证纯 `net10.0` 的 `DSHDesktop.Core`；仍属于 Windows 壳、但只依赖 BCL 的
 `TerminalScreen` / `DesktopLog` / `VersionUpdate` / WebView 安全与启动健康策略继续用源码链接测试。
 
@@ -210,8 +210,8 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 
 | 阶段 | 状态 | 实施内容 | 通过标准 |
 |---|---|---|---|
-| CI 验证基线 | 已有 | Windows 构建、278 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
-| M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；签名元数据验签、有界下载和安全原子解包契约已落地，待配置发布信任根、端点和接线 | 独立 profile、更新、健康失败回退均可验证 |
+| CI 验证基线 | 已有 | Windows 构建、282 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
+| M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；已验签下载、安全原子解包和 manifest 身份复验可组合为候选运行时，待配置发布信任根、端点和 UI 接线 | 独立 profile、更新、健康失败回退均可验证 |
 | M5-A Portable | 待实施 | CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入；生成 `win-x64` 完整发布目录和 Portable ZIP；上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
 | M5-B 安装器 | 待实施 | 首选 Inno Setup 生成按用户安装的 `Setup.exe`；统一 Desktop、runtime manifest 与安装器版本身份 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
 | M5-C 正式发布 | 待实施 | Authenticode 可信签名、RFC3161 时间戳、`SHA256SUMS.txt`、SBOM、NOTICE 与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
