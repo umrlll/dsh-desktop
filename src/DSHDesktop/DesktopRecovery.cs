@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using DSHDesktop.Core;
 
 namespace DSHDesktop;
 
@@ -210,6 +211,7 @@ internal static class DesktopRecovery
             // 回滚会把被禁用的记录一并作废：清单已经回到当时的样子
             var record = Path.Combine(profileDir, DisabledRecordName);
             if (File.Exists(record)) File.Delete(record);
+            PruneGeneratedBackups(profileDir);
             message = "已回滚 " + restored.Count + " 个清单文件（原文件已备份为 *.bak-" + stamp + "）：" + string.Join(", ", restored);
             DesktopLog.Info("回滚 profile: " + message);
             return true;
@@ -307,6 +309,7 @@ internal static class DesktopRecovery
                 ["bundles"] = new JsonArray(targets.Select(x => (JsonNode)JsonValue.Create(x)!).ToArray()),
             };
             File.WriteAllText(recordPath, record.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            PruneGeneratedBackups(profileDir);
 
             message = "已从 bundles 禁用 " + targets.Count + " 个插件：" + string.Join(", ", targets)
                       + "\n清单已备份为 " + Path.GetFileName(backup) + "，可通过「恢复被禁用的插件」还原。";
@@ -355,6 +358,20 @@ internal static class DesktopRecovery
             message = "恢复失败: " + ex.Message;
             DesktopLog.Error("恢复 bundle 失败", ex);
             return false;
+        }
+    }
+
+    private static void PruneGeneratedBackups(string profileDir)
+    {
+        try
+        {
+            var result = ProfileBackupRetention.Prune(profileDir, ManifestFiles);
+            if (!result.Success)
+                DesktopLog.Warn("Profile backup maintenance did not finish: " + string.Join(", ", result.Errors.Take(3)));
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn("Profile backup maintenance failed: " + DesktopLog.Describe(ex));
         }
     }
 
