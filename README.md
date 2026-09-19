@@ -15,15 +15,16 @@ Chromium；桌面壳自身较小，完整发布载荷会另外携带锁定的 No
 
 | 维度 | 现状 |
 |---|---|
-| 发布状态 | **没有任何发行版**：无安装器、无版本线（版本号治理已落地，可注入） |
+| 发布状态 | **没有任何发行版**：无安装器；版本号治理已落地，但尚未建立正式发布通道 |
 | 平台 | **仅 Windows x64**（依赖 WebView2 与 WinForms 托盘，未做跨平台抽象） |
-| 分发方式 | **直接部署目录**（`dotnet publish` 产物 + 自带 `runtime\` 载荷），不是安装包 |
-| 协作入口 | 本仓库为**本地检出**；已含 CI 工作流（push 后生效），不带远端 |
+| 分发方式 | 完整发布设计为 **Portable 目录/ZIP + 自带 `runtime\` 载荷**；当前 CI 只构筑桌面壳，不是可安装包 |
+| 协作入口 | GitHub 仓库已启用 Windows CI：构建、测试、shell-only publish，以及配置证书后的可选签名 |
 | 签名 | **仅自签**：签名与时间戳成立，但**不消除 SmartScreen 警告**（见 §3） |
 | 定位 | 个人自用/实验；**不建议**在未审阅源码的情况下用于生产或分发 |
 
-已知缺口（尚未实施）：安装器与差分更新、`SHA256SUMS`、Desktop 专用宿主适配和不可变槽更新链。
-版本号治理、兼容矩阵与自签签名**已落地**（见 §3）。
+已知缺口（尚未实施）：完整 CI 运行时输入、Portable ZIP、安装器、可信发行签名、`SHA256SUMS`、
+SBOM 和 Desktop 专用宿主适配。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
+**已经落地**（见 §3、§6、§7）。
 
 ---
 
@@ -34,7 +35,7 @@ Chromium；桌面壳自身较小，完整发布载荷会另外携带锁定的 No
 | Windows 10/11 x64 | 仅 x64 验证过 |
 | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) | WPF + WinForms；SDK 用于构建 |
 | [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | Win11 通常已内置；缺失时界面无法显示 |
-| Node.js + pnpm | 宿主用于运行 `dsh web` 与插件市场安装；节点路径见 §7 已知问题 |
+| Node.js + pnpm | 宿主用于运行 `dsh web` 与插件市场安装；正式发行将锁定并随 Portable/安装器提供 |
 
 ---
 
@@ -53,6 +54,11 @@ dotnet publish DSHDesktop\DSHDesktop.csproj -c Release `
   -p:BundleDshSource="$dshNodeModules" -p:BundleDshVersion=0.1.5-alpha.1 `
   -p:BundlePnpmSource="$pnpmPrefix" -p:BundlePnpmVersion=11.27.0
 ```
+
+> **当前 CI 产物不能直接安装，也不是完整 Portable 版本。** CI 使用
+> `SkipBundleRuntime=true`，没有携带 Node、DSH 和 pnpm；而且只有配置签名 Secrets 时才执行上传，
+> 当前上传清单也仅含 `DSHDesktop.exe` 与 `DSHDesktop.dll`，不足以代表完整 `publish` 目录。
+> CI 在这一阶段承担的是编译、测试和发布规则验证，不应把其 artifact 当成正式发行包。
 
 未传 `SkipBundleRuntime=true` 时，缺少任一来源或精确版本会在 `Publish` 前直接失败。完整发布每次
 从零建立 `obj\bundle-runtime\<Configuration>`，生成并自校验 manifest，再发布到
@@ -196,7 +202,34 @@ scripts/signing/       自签代码签名脚本与说明
 
 ---
 
-## 7. 已知问题（诚实清单）
+## 7. CI 产物与发布实施顺序
+
+补齐可安装版本不会改变既定架构，也不会打乱 M3 的运行时治理计划。发布链按以下门禁顺序推进，
+每一步通过后才进入下一步：
+
+| 阶段 | 状态 | 实施内容 | 通过标准 |
+|---|---|---|---|
+| CI 验证基线 | 已有 | Windows 构建、260 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
+| M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；签名更新元数据与载荷 | 独立 profile、更新、健康失败回退均可验证 |
+| M5-A Portable | 待实施 | CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入；生成 `win-x64` 完整发布目录和 Portable ZIP；上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
+| M5-B 安装器 | 待实施 | 首选 Inno Setup 生成按用户安装的 `Setup.exe`；统一 Desktop、runtime manifest 与安装器版本身份 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
+| M5-C 正式发布 | 待实施 | Authenticode 可信签名、RFC3161 时间戳、`SHA256SUMS.txt`、SBOM、NOTICE 与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
+
+发布门的简化顺序为：
+
+```text
+锁定并验证运行时 → 完整 Portable ZIP → 干净系统启动验证
+                    → 安装器 → 安装/升级/回退/卸载验证 → 正式发布
+```
+
+不在 Portable 完整性验证之前封装安装器，避免把缺失运行时或不可复现输入隐藏在 `Setup.exe` 中。
+ConPTY、WPF/WebView2 壳、不可变运行时槽和 Core 状态机保持不变。Avalonia 仍属于 Windows 稳定版之后、
+且 macOS/Linux 需求达到明确阈值时的独立评估项；即使未来迁移，新壳也应复用 Core、运行时 manifest、
+兼容矩阵和发布门禁，不回退已经建立的可靠性能力。
+
+---
+
+## 8. 已知问题（诚实清单）
 
 1. **CI 尚未配置锁定运行时来源**：流水线当前只发布 `SkipBundleRuntime=true` 的壳；完整发布门已经
    fail-closed，但仍需由可复现下载/仓库缓存提供 Node、DSH 与 pnpm 输入。
@@ -211,7 +244,7 @@ scripts/signing/       自签代码签名脚本与说明
 
 ---
 
-## 8. 许可
+## 9. 许可
 
 本项目以 **MIT License** 发布，见 [LICENSE](LICENSE)；第三方组件与商标声明见 [NOTICE.md](NOTICE.md)。
 DeepSeek Harness 上游代码未被修改，以固定版本原样运行，遵循其自身许可。
