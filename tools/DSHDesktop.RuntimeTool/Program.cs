@@ -18,6 +18,7 @@ internal static class Program
                 "generate" => Generate(options),
                 "verify" => Verify(options),
                 "activate" => Activate(options),
+                "checksums" => Checksums(options),
                 _ => Usage(),
             };
         }
@@ -68,6 +69,20 @@ internal static class Program
         var result = new RuntimeSlotManager(runtimeRoot).Activate(runtimeId);
         if (!result.Success) throw new InvalidDataException(result.Error ?? "运行时槽激活失败。");
         Console.WriteLine("runtime-manifest: activated " + runtimeId);
+        return 0;
+    }
+
+    private static int Checksums(IReadOnlyDictionary<string, string> options)
+    {
+        var root = Required(options, "root");
+        var output = Required(options, "output");
+        var checksums = ReleaseChecksums.Create(root, output);
+        checksums.Write(output);
+        var issues = ReleaseChecksums.Parse(File.ReadAllText(output)).Verify(root);
+        if (issues.Count > 0)
+            throw new InvalidDataException("Release checksum verification failed: " + string.Join(
+                ", ", issues.Select(issue => issue.Code + "(" + issue.Path + ")")));
+        Console.WriteLine($"runtime-manifest: wrote {checksums.Entries.Count} release checksums to {output}");
         return 0;
     }
 
@@ -147,7 +162,7 @@ internal static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate --name value ...");
+        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums --name value ...");
         return 2;
     }
 }
