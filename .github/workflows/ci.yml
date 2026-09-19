@@ -104,12 +104,13 @@ jobs:
           "sha=$sha"         >> $env:GITHUB_OUTPUT
           Write-Host "版本 $prefix+${{ github.run_number }} (sha=$sha)"
 
-      - name: Publish (with runtime payload)
+      - name: Publish shell (locked runtime payload is a separate release input)
         shell: pwsh
         run: |
           dotnet publish DSHDesktop/DSHDesktop.csproj -c Release -o publish `
             -p:VersionPrefix=${{ steps.ver.outputs.prefix }} `
-            -p:BuildId=${{ steps.ver.outputs.buildid }}
+            -p:BuildId=${{ steps.ver.outputs.buildid }} `
+            -p:SkipBundleRuntime=true
 
       - name: Sign artifacts (skipped when no signing secret)
         if: ${{ env.SIGNING_PFX_BASE64 != '' }}

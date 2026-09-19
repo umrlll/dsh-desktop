@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="DSHDesktop.Core/DSHDesktop.Core.csproj" />
+  <Project Path="DSHDesktop.RuntimeTool/DSHDesktop.RuntimeTool.csproj" />
   <Project Path="DSHDesktop/DSHDesktop.csproj" />
   <Project Path="DSHDesktop.Tests/DSHDesktop.Tests.csproj" />
 </Solution>

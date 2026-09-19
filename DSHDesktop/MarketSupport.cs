@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using DSHDesktop.Core;
 
 namespace DSHDesktop;
 
@@ -43,24 +44,19 @@ internal static class MarketSupport
 
     // ---------------------------------------------------------------- 工具链
 
-    /// <summary>当前 profile 名（与 MainWindow 启动 profile 保持一致）。</summary>
-    public static string ActiveProfile { get; set; } = "web";
+    private static ProfileDescriptor ActiveProfile => ProfileManager.Default.Active;
 
     /// <summary>DSH 主目录：优先 <c>DSH_HOME</c>，否则 <c>~/.dsh</c>。</summary>
-    public static string DshHome()
-    {
-        var home = Environment.GetEnvironmentVariable("DSH_HOME");
-        if (!string.IsNullOrWhiteSpace(home)) return home!;
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh");
-    }
+    public static string DshHome() => ActiveProfile.DshHome;
 
     /// <summary>活动 profile 的目录（默认布局 <c>$DSH_HOME/profiles/&lt;name&gt;</c>）。</summary>
     public static string ProfileDir(string? profile = null)
-        => Path.Combine(DshHome(), "profiles", profile ?? ActiveProfile);
+        => string.IsNullOrWhiteSpace(profile) || profile == ActiveProfile.Name
+            ? ActiveProfile.Directory
+            : Path.Combine(ActiveProfile.DshHome, "profiles", profile);
 
     /// <summary>settings.yaml 的路径（dsh-settings-file 的默认文档）。</summary>
-    public static string SettingsPath() => Path.Combine(DshHome(), "settings.yaml");
+    public static string SettingsPath() => ActiveProfile.SettingsPath;
 
     /// <summary>
     /// 需要前置到 PATH 的工具链目录，按可信度排序：市场自己会查的固定目录、
@@ -98,8 +94,8 @@ internal static class MarketSupport
         // 带 npm/corepack 的 node 安装目录——市场的一键配置要用它们
         try
         {
-            var npm = MainWindow.FindNpm();
-            if (npm != null) Add(Path.GetDirectoryName(npm.Value.Node));
+            var npm = RuntimeManager.Default.FindNpm();
+            if (npm != null) Add(Path.GetDirectoryName(npm.NodePath));
         }
         catch { /* 同上 */ }
 
@@ -124,7 +120,7 @@ internal static class MarketSupport
         {
             ["PATH"] = PrependToPath(currentPath),
             ["DSHDESKTOP"] = "1",
-            ["DSHDESKTOP_PROFILE"] = ActiveProfile,
+            ["DSHDESKTOP_PROFILE"] = ActiveProfile.Name,
             ["DSHDESKTOP_PROFILE_DIR"] = ProfileDir(),
         };
 

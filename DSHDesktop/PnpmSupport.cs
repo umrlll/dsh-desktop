@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using DSHDesktop.Core;
 
 namespace DSHDesktop;
 
@@ -89,6 +90,15 @@ internal static class PnpmSupport
                 }
                 var shim = WriteShims(mode);
                 return new Preparation(true, shim, "已按 DSHDESKTOP_PNPM 指定的 pnpm 生成垫片。");
+            }
+
+            // 正式运行时携带的锁定 pnpm 优先于本机 PATH 与联网安装。它与
+            // desktop-runtime.json 同属一个已校验发行组合，不应再被机器环境悄悄替换。
+            var bundled = BundledPnpmEntry();
+            if (bundled != null)
+            {
+                var shim = WriteShims(bundled);
+                if (shim != null) return new Preparation(true, shim, null);
             }
 
             var forced = mode.Equals("on", StringComparison.OrdinalIgnoreCase);
@@ -220,7 +230,7 @@ internal static class PnpmSupport
     /// <summary>用即将交付的那个 pnpm 条目做一次真实请求，确认它在这台机器上真的能到 registry。</summary>
     private static bool PnpmEntryReachesRegistry(string entry)
     {
-        var node = MainWindow.FindNode();
+        var node = RuntimeManager.Default.Resolve().NodePath;
         if (node == null) return false;
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -401,6 +411,19 @@ internal static class PnpmSupport
 
     // ---------------------------------------------------------------- 安装内置 pnpm
 
+    private static string? BundledPnpmEntry()
+    {
+        var runtimeRoot = RuntimeManager.Default.Resolve().RuntimeRoot;
+        if (runtimeRoot == null) return null;
+        var bin = Path.Combine(runtimeRoot, "pnpm", "node_modules", "pnpm", "bin");
+        foreach (var candidate in new[] { "pnpm.cjs", "pnpm.mjs" })
+        {
+            var entry = Path.Combine(bin, candidate);
+            if (File.Exists(entry)) return entry;
+        }
+        return null;
+    }
+
     /// <summary>确保本地有一份 Node 版 pnpm，返回其 pnpm.cjs 路径；失败返回 null 并给出原因。</summary>
     private static string? EnsureLocalPnpm(int major, out string? notice)
     {
@@ -413,7 +436,7 @@ internal static class PnpmSupport
             if (File.Exists(entry)) return entry;
         }
 
-        var npm = MainWindow.FindNpm();
+        var npm = RuntimeManager.Default.FindNpm();
         if (npm == null)
         {
             notice = "未找到 npm，无法准备内置 pnpm（本机 pnpm 又不可用）。";
@@ -423,7 +446,7 @@ internal static class PnpmSupport
         Directory.CreateDirectory(root);
         var args = new List<string>
         {
-            npm.Value.NpmCli, "install", $"pnpm@{major}",
+            npm.NpmCliPath, "install", $"pnpm@{major}",
             "--prefix", root,
             "--no-audit", "--no-fund", "--no-save", "--loglevel=error",
         };
@@ -432,7 +455,7 @@ internal static class PnpmSupport
             ["PATH"] = MarketSupport.PrependToPath(Environment.GetEnvironmentVariable("PATH")),
             ["npm_config_cache"] = Path.Combine(AppDataRoot(), "npm-cache"),
         };
-        var (code, output) = RunCapture(npm.Value.Node, args, 2 * 60_000, env);
+        var (code, output) = RunCapture(npm.NodePath, args, 2 * 60_000, env);
 
         foreach (var candidate in new[] { "pnpm.cjs", "pnpm.mjs" })
         {
@@ -454,7 +477,7 @@ internal static class PnpmSupport
     /// <summary>写 pnpm/pnpx/pn 垫片并返回目录；垫片只调用 Node 入口，不依赖 shell 扩展名解析。</summary>
     private static string? WriteShims(string pnpmEntry)
     {
-        var node = MainWindow.FindNode();
+        var node = RuntimeManager.Default.Resolve().NodePath;
         if (node == null) return null;
 
         var dir = ShimRoot();

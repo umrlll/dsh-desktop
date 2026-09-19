@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>DSHDesktop.Core</RootNamespace>
+    <AssemblyName>DSHDesktop.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using DSHDesktop.Core;
 
 namespace DSHDesktop;
 
@@ -18,6 +19,13 @@ public partial class App : System.Windows.Application
     {
         DesktopLog.Initialize();
         DesktopLog.Info("App.OnStartup args=[" + string.Join(' ', e.Args) + "]");
+
+        if (e.Args.Any(argument =>
+                string.Equals(argument, "--safe-mode", StringComparison.OrdinalIgnoreCase)))
+        {
+            ProfileManager.Default.Activate(ProfileMode.Safe);
+            DesktopLog.Warn("已按 --safe-mode 请求选择隔离 profile：desktop-safe。");
+        }
 
         // 单实例互斥（优化清单 B1）：两个实例会各自顺延端口、各自对同一 profile 拍快照/铺种子，
         // 并把 DesktopRecovery 的 pending 目录交替删改。此处必须在创建窗口、触碰 WebView2 之前拦截。
@@ -99,6 +107,30 @@ public partial class App : System.Windows.Application
         // 首实例：**只有 createdNew == true 才建立唤醒监听**（见 SingleInstanceIpc 契约）。
         // 建立失败只记日志，绝不影响首实例启动或使其退出。
         SingleInstanceIpc.StartServer(ActivationCoordinator.Request);
+
+        // 迁移只允许首实例执行，避免二次实例在已有服务读 profile 时并发复制。
+        if (e.Args.Any(argument =>
+                string.Equals(argument, "--migrate-profile", StringComparison.OrdinalIgnoreCase)))
+        {
+            var migration = ProfileManager.Default.MigrateLegacyToDesktop();
+            DesktopLog.Info("profile 迁移请求: status=" + migration.Status
+                + " source=" + migration.SourceDirectory
+                + " target=" + migration.TargetDirectory
+                + " files=" + string.Join(',', migration.CopiedFiles ?? Array.Empty<string>()));
+            try
+            {
+                AppDialog.Show(
+                    null,
+                    "DSH Desktop — Profile 迁移",
+                    (migration.Notice ?? migration.Status.ToString())
+                    + "\n\n当前版本仍继续使用 web profile；完成专用 Desktop 宿主适配后才会切换，"
+                    + "不会让尚未恢复依赖的 profile 参与启动。",
+                    primary: "知道了",
+                    warning: migration.Status is ProfileMigrationStatus.Failed
+                        or ProfileMigrationStatus.SourceInvalid);
+            }
+            catch { /* 迁移结果已写入日志，提示失败不影响正常启动 */ }
+        }
 
         DispatcherUnhandledException += (_, args) =>
         {

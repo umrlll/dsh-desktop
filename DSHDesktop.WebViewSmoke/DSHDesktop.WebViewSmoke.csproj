@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- Offline smoke hosts must not fail or warn because NuGet's advisory endpoint is unreachable. -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+    <Compile Include="..\DSHDesktop\FrontendHealthProbe.cs" Link="Linked\FrontendHealthProbe.cs" />
+    <Compile Include="..\DSHDesktop\WebViewPolicy.cs" Link="Linked\WebViewPolicy.cs" />
+  </ItemGroup>
+
+</Project>

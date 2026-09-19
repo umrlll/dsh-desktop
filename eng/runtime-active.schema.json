@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dshdesktop.local/schemas/runtime-active.schema.json",
+  "title": "DSH Desktop active runtime slot pointer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "activeRuntimeId", "previousRuntimeId"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "activeRuntimeId": { "$ref": "#/$defs/runtimeId" },
+    "previousRuntimeId": {
+      "oneOf": [
+        { "$ref": "#/$defs/runtimeId" },
+        { "type": "null" }
+      ]
+    }
+  },
+  "$defs": {
+    "runtimeId": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z._-]{0,199}$"
+    }
+  }
+}

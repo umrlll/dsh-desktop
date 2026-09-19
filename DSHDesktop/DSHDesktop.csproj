@@ -52,35 +52,77 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\DSHDesktop.Core\DSHDesktop.Core.csproj" />
+  </ItemGroup>
+
   <!-- ================= 内置运行时（Node + dsh）自动打包 ================= -->
   <PropertyGroup>
-    <!-- 项目内的运行时目录：首次发布时自动补齐 -->
-    <BundleRuntimeDir Condition="'$(BundleRuntimeDir)' == ''">$(MSBuildProjectDirectory)\runtime</BundleRuntimeDir>
-    <!-- Node 来源（可覆盖：dotnet publish -p:BundleNodeSource=...） -->
-    <BundleNodeSource Condition="'$(BundleNodeSource)' == ''">D:\nodejs\node.exe</BundleNodeSource>
-    <!-- dsh node_modules 来源（可覆盖：dotnet publish -p:BundleDshSource=...） -->
-    <BundleDshSource Condition="'$(BundleDshSource)' == ''">$(LOCALAPPDATA)\npm-cache\_npx\1e7f6d9597241db0\node_modules</BundleDshSource>
+    <!-- 每次发布都从显式锁定输入重建暂存目录；不复用源码树下被忽略的本机 runtime。 -->
+    <BundleRuntimeDir Condition="'$(BundleRuntimeDir)' == ''">$(MSBuildProjectDirectory)\obj\bundle-runtime\$(Configuration)</BundleRuntimeDir>
+    <BundlePlatform Condition="'$(BundlePlatform)' == ''">win32</BundlePlatform>
+    <BundleArchitecture Condition="'$(BundleArchitecture)' == ''">x64</BundleArchitecture>
+    <BundleProfileSchema Condition="'$(BundleProfileSchema)' == ''">1</BundleProfileSchema>
+    <BundleRuntimeId Condition="'$(BundleRuntimeId)' == '' And '$(BundleDshVersion)' != '' And '$(BundleNodeVersion)' != '' And '$(BundlePnpmVersion)' != ''">dsh-$(BundleDshVersion)-$(BundlePlatform)-$(BundleArchitecture)-node-$(BundleNodeVersion)-pnpm-$(BundlePnpmVersion)</BundleRuntimeId>
+    <RuntimeManifestToolProject>$(MSBuildProjectDirectory)\..\DSHDesktop.RuntimeTool\DSHDesktop.RuntimeTool.csproj</RuntimeManifestToolProject>
+    <RuntimeManifestToolDll>$(MSBuildProjectDirectory)\..\DSHDesktop.RuntimeTool\bin\$(Configuration)\net10.0\DSHDesktop.RuntimeTool.dll</RuntimeManifestToolDll>
     <BaseOutputPath>$(SolutionDir).build\$(MSBuildProjectName)\</BaseOutputPath>
   </PropertyGroup>
 
-  <!-- 1) 首次发布：把 Node 与 dsh 补齐到项目内 runtime\（已存在则跳过，增量很快） -->
-  <Target Name="PrepareBundleRuntime" Condition="'$(SkipBundleRuntime)' != 'true'">
-    <MakeDir Directories="$(BundleRuntimeDir)\node;$(BundleRuntimeDir)\dsh" />
-    <Copy SourceFiles="$(BundleNodeSource)" DestinationFolder="$(BundleRuntimeDir)\node" SkipUnchangedFiles="true" Condition="!Exists('$(BundleRuntimeDir)\node\node.exe') And Exists('$(BundleNodeSource)')" />
-    <Exec Command="robocopy &quot;$(BundleDshSource)&quot; &quot;$(BundleRuntimeDir)\dsh\node_modules&quot; /E /XO /NFL /NDL /NJH /NJS /NP" IgnoreExitCode="true" Condition="!Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js') And Exists('$(BundleDshSource)')" />
-    <!-- 安装根 package.json：应用内“立即更新”在该目录执行 npm install，缺它会导致更新报错 -->
-    <Copy SourceFiles="$(BundleDshSource)\..\package.json" DestinationFolder="$(BundleRuntimeDir)\dsh" SkipUnchangedFiles="true" Condition="!Exists('$(BundleRuntimeDir)\dsh\package.json') And Exists('$(BundleDshSource)\..\package.json')" />
-    <!-- 来源没有 package.json 时，补一个最小的，保证更新可用 -->
-    <WriteLinesToFile File="$(BundleRuntimeDir)\dsh\package.json" Lines="{ &quot;private&quot;: true, &quot;dependencies&quot;: { &quot;@deepseek-ai/dsh&quot;: &quot;*&quot; } }" Overwrite="true" Condition="!Exists('$(BundleRuntimeDir)\dsh\package.json') And Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')" />
-    <Warning Text="[Bundle] 缺少 Node 来源：$(BundleNodeSource)" Condition="!Exists('$(BundleRuntimeDir)\node\node.exe')" />
-    <Warning Text="[Bundle] 缺少 dsh 来源：$(BundleDshSource)" Condition="!Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')" />
+  <Target Name="ValidateBundleInputs" BeforeTargets="Publish" Condition="'$(SkipBundleRuntime)' != 'true'">
+    <Error Condition="'$(BundleNodeSource)' == ''" Text="[Bundle] 缺少显式 BundleNodeSource；正式 publish 不读取本机默认 Node 路径。" />
+    <Error Condition="'$(BundleDshSource)' == ''" Text="[Bundle] 缺少显式 BundleDshSource（应指向锁定的 node_modules）。" />
+    <Error Condition="'$(BundlePnpmSource)' == ''" Text="[Bundle] 缺少显式 BundlePnpmSource（应指向含 node_modules\pnpm 的锁定前缀）。" />
+    <Error Condition="'$(BundleNodeVersion)' == ''" Text="[Bundle] 缺少精确 BundleNodeVersion。" />
+    <Error Condition="'$(BundleDshVersion)' == ''" Text="[Bundle] 缺少精确 BundleDshVersion。" />
+    <Error Condition="'$(BundlePnpmVersion)' == ''" Text="[Bundle] 缺少精确 BundlePnpmVersion。" />
+    <Error Condition="'$(BundleRuntimeId)' == ''" Text="[Bundle] 无法生成 BundleRuntimeId。" />
+    <Error Condition="'$(BundleNodeSource)' != '' And !Exists('$(BundleNodeSource)')" Text="[Bundle] Node 来源不存在：$(BundleNodeSource)" />
+    <Error Condition="'$(BundleDshSource)' != '' And !Exists('$(BundleDshSource)\@deepseek-ai\dsh\package.json')" Text="[Bundle] DSH 来源缺少 @deepseek-ai\dsh\package.json：$(BundleDshSource)" />
+    <Error Condition="'$(BundlePnpmSource)' != '' And !Exists('$(BundlePnpmSource)\node_modules\pnpm\package.json')" Text="[Bundle] pnpm 来源缺少 node_modules\pnpm\package.json：$(BundlePnpmSource)" />
   </Target>
 
-  <!-- 2) 发布后：把 runtime\ 一并拷入 publish 输出目录 -->
-  <Target Name="CopyBundleRuntime" AfterTargets="Publish" DependsOnTargets="PrepareBundleRuntime" Condition="'$(SkipBundleRuntime)' != 'true'">
-    <Exec Command="robocopy &quot;$(BundleRuntimeDir)&quot; &quot;$(PublishDir)runtime&quot; /E /XO /NFL /NDL /NJH /NJS /NP" IgnoreExitCode="true" />
-    <Warning Text="[Bundle] 内置运行时缺失，publish 未包含 Node/dsh。" Condition="!Exists('$(PublishDir)runtime\node\node.exe')" />
-    <Message Importance="high" Text="[Bundle] 内置运行时已打包到 $(PublishDir)runtime" />
+  <!-- 1) 从零暂存锁定的 Node、DSH 与 pnpm；复制失败由 MSBuild 直接终止。 -->
+  <Target Name="PrepareBundleRuntime" DependsOnTargets="ValidateBundleInputs" Condition="'$(SkipBundleRuntime)' != 'true'">
+    <RemoveDir Directories="$(BundleRuntimeDir)" Condition="Exists('$(BundleRuntimeDir)')" />
+    <MakeDir Directories="$(BundleRuntimeDir)\node;$(BundleRuntimeDir)\dsh" />
+    <MakeDir Directories="$(BundleRuntimeDir)\pnpm" />
+    <ItemGroup>
+      <_BundleDshFiles Include="$(BundleDshSource)\**\*" />
+      <_BundlePnpmFiles Include="$(BundlePnpmSource)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="$(BundleNodeSource)" DestinationFolder="$(BundleRuntimeDir)\node" />
+    <Copy SourceFiles="@(_BundleDshFiles)" DestinationFiles="@(_BundleDshFiles->'$(BundleRuntimeDir)\dsh\node_modules\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(_BundlePnpmFiles)" DestinationFiles="@(_BundlePnpmFiles->'$(BundleRuntimeDir)\pnpm\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <WriteLinesToFile File="$(BundleRuntimeDir)\dsh\package.json" Lines="{ &quot;private&quot;: true, &quot;dependencies&quot;: { &quot;@deepseek-ai/dsh&quot;: &quot;$(BundleDshVersion)&quot; } }" Overwrite="true" />
+    <Error Condition="!Exists('$(BundleRuntimeDir)\node\node.exe')" Text="[Bundle] Node 暂存失败。" />
+    <Error Condition="!Exists('$(BundleRuntimeDir)\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')" Text="[Bundle] DSH 暂存失败。" />
+    <Error Condition="!Exists('$(BundleRuntimeDir)\pnpm\node_modules\pnpm\package.json')" Text="[Bundle] pnpm 暂存失败。" />
+  </Target>
+
+  <Target Name="BuildRuntimeManifestTool" Condition="'$(SkipBundleRuntime)' != 'true'">
+    <MSBuild Projects="$(RuntimeManifestToolProject)" Targets="Build"
+             Properties="Configuration=$(Configuration);VersionPrefix=$(VersionPrefix);VersionSuffix=$(VersionSuffix);BuildId=$(BuildId)" />
+  </Target>
+
+  <Target Name="GenerateRuntimeManifest"
+          DependsOnTargets="PrepareBundleRuntime;PreparePluginSeed;RemovePluginSeedWhenDisabled;BuildRuntimeManifestTool"
+          Condition="'$(SkipBundleRuntime)' != 'true'">
+    <Exec Command="dotnet &quot;$(RuntimeManifestToolDll)&quot; generate --root &quot;$(BundleRuntimeDir)&quot; --output &quot;$(BundleRuntimeDir)\desktop-runtime.json&quot; --runtime-id &quot;$(BundleRuntimeId)&quot; --desktop-version &quot;$(_DshSemVer)&quot; --dsh-version &quot;$(BundleDshVersion)&quot; --node-version &quot;$(BundleNodeVersion)&quot; --pnpm-version &quot;$(BundlePnpmVersion)&quot; --platform &quot;$(BundlePlatform)&quot; --architecture &quot;$(BundleArchitecture)&quot; --profile-schema &quot;$(BundleProfileSchema)&quot;" />
+  </Target>
+
+  <!-- 2) 发布后：只复制本次从锁定输入生成且通过 manifest 自校验的 runtime。 -->
+  <Target Name="CopyBundleRuntime" AfterTargets="Publish" DependsOnTargets="GenerateRuntimeManifest" Condition="'$(SkipBundleRuntime)' != 'true'">
+    <RemoveDir Directories="$(PublishDir)runtime" Condition="Exists('$(PublishDir)runtime')" />
+    <MakeDir Directories="$(PublishDir)runtime\versions\$(BundleRuntimeId)" />
+    <ItemGroup>
+      <_PreparedRuntimeFiles Include="$(BundleRuntimeDir)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PreparedRuntimeFiles)" DestinationFiles="@(_PreparedRuntimeFiles->'$(PublishDir)runtime\versions\$(BundleRuntimeId)\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Exec Command="dotnet &quot;$(RuntimeManifestToolDll)&quot; activate --runtime-root &quot;$(PublishDir)runtime&quot; --runtime-id &quot;$(BundleRuntimeId)&quot;" />
+    <Error Text="[Bundle] 发布 runtime 缺少活动槽 manifest。" Condition="!Exists('$(PublishDir)runtime\versions\$(BundleRuntimeId)\desktop-runtime.json')" />
+    <Error Text="[Bundle] 发布 runtime 缺少 active.json。" Condition="!Exists('$(PublishDir)runtime\active.json')" />
+    <Message Importance="high" Text="[Bundle] 内置运行时槽已打包并激活：$(BundleRuntimeId)" />
   </Target>
 
   <!-- ================= 可选：把打包机上已装的 profile 插件内置集成 =================
@@ -89,11 +131,10 @@
        由 ProfileSeed 铺开，于是那些插件是"内置"的，不用再装。
 
        可调：
-         -p:BundleProfilePluginsSource="C:\Users\me\.dsh\profiles\web"   换个来源 profile
+         -p:BundleProfilePluginsSource="%USERPROFILE%\.dsh\profiles\web"  换个来源 profile
          -p:BundleProfilePluginsExclude="dsh-context;zod"                 不带某些顶层包 -->
   <PropertyGroup>
     <BundleProfilePlugins Condition="'$(BundleProfilePlugins)' == ''">false</BundleProfilePlugins>
-    <BundleProfilePluginsSource Condition="'$(BundleProfilePluginsSource)' == ''">$(USERPROFILE)\.dsh\profiles\web</BundleProfilePluginsSource>
     <BundleProfilePluginsExclude Condition="'$(BundleProfilePluginsExclude)' == ''"></BundleProfilePluginsExclude>
   </PropertyGroup>
 
@@ -105,8 +146,8 @@
       <_SeedSourceReady Condition="Exists('$(BundleProfilePluginsSource)\package.json')">true</_SeedSourceReady>
     </PropertyGroup>
 
-    <Warning Text="[Bundle] BundleProfilePlugins=true，但找不到 profile 清单：$(BundleProfilePluginsSource)\package.json"
-             Condition="'$(_SeedSourceReady)' != 'true'" />
+    <Error Text="[Bundle] BundleProfilePlugins=true 时必须显式传入含 package.json 的 BundleProfilePluginsSource。"
+           Condition="'$(_SeedSourceReady)' != 'true'" />
 
     <ItemGroup Condition="'$(_SeedSourceReady)' == 'true'">
       <_SeedExcludeDirs Include="$(BundleProfilePluginsExclude)" Condition="'$(BundleProfilePluginsExclude)' != ''" />

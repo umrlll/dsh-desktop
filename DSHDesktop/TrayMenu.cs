@@ -75,7 +75,9 @@ internal static class TrayMenu
     {
         item.Text = text;
         item.Enabled = enabled;
+        var previousImage = item.Image;
         item.Image = GlyphImage(glyph, color ?? GlyphColor);
+        previousImage?.Dispose();
     }
 
     public static WinForms.ToolStripSeparator Separator()

@@ -685,6 +685,13 @@
                                            FontSize="14" VerticalAlignment="Center"/>
                             </MenuItem.Icon>
                         </MenuItem>
+                        <MenuItem x:Name="MenuSafeMode" Header="切换到安全模式" Click="OnMenuToggleSafeMode"
+                                  auto:AutomationProperties.Name="切换安全模式">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                            </MenuItem.Icon>
+                        </MenuItem>
                         <MenuItem Header="重启到恢复模式" Click="OnMenuRestartToRecovery"
                                   auto:AutomationProperties.Name="重启到恢复模式">
                             <MenuItem.Icon>

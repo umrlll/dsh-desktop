@@ -4,8 +4,8 @@
 Windows 窗口：自动拉起并托管本地 Harness 服务、内嵌 WebView2 显示界面、集成系统托盘与单实例唤醒，
 并自研了 ConPTY 终端、恢复助手与带备份回滚的更新流程。
 
-技术栈：**C# / XAML · WPF + WinForms + WebView2 · .NET 10**。全部为**自持平台逻辑**，不打包
-Chromium、不打包 Node；自有二进制体积约 **0.55 MB / 6 文件**（不含 WebView2 托管 dll）。
+技术栈：**C# / XAML · WPF + WinForms + WebView2 · .NET 10**。全部为**自持平台逻辑**，不另带
+Chromium；桌面壳自身较小，完整发布载荷会另外携带锁定的 Node/DSH 运行时。
 
 ---
 
@@ -22,8 +22,8 @@ Chromium、不打包 Node；自有二进制体积约 **0.55 MB / 6 文件**（�
 | 签名 | **仅自签**：签名与时间戳成立，但**不消除 SmartScreen 警告**（见 §3） |
 | 定位 | 个人自用/实验；**不建议**在未审阅源码的情况下用于生产或分发 |
 
-已知缺口（尚未实施）：安装器与差分更新、`SHA256SUMS`、安全模式、`DSHDesktop.Core` 抽离。
-版本号治理与自签签名**已落地**（见 §3）。
+已知缺口（尚未实施）：安装器与差分更新、`SHA256SUMS`、Desktop 专用宿主适配和不可变槽更新链。
+版本号治理、兼容矩阵与自签签名**已落地**（见 §3）。
 
 ---
 
@@ -44,12 +44,30 @@ Chromium、不打包 Node；自有二进制体积约 **0.55 MB / 6 文件**（�
 # 只构建壳（跳过把 Node/dsh 运行时拷进产物，日常开发用这条）
 dotnet build DSHDesktop\DSHDesktop.csproj -p:SkipBundleRuntime=true -v minimal
 
-# 构建并打包运行时载荷（产物落在 publish\，体积约 300 MB+）
-dotnet publish DSHDesktop\DSHDesktop.csproj -c Release
+# 只发布桌面壳（CI 当前使用此模式；不冒充完整发行包）
+dotnet publish DSHDesktop\DSHDesktop.csproj -c Release -p:SkipBundleRuntime=true
+
+# 完整运行时发布必须显式提供锁定来源与精确版本；以下变量应指向已准备的离线输入
+dotnet publish DSHDesktop\DSHDesktop.csproj -c Release `
+  -p:BundleNodeSource="$nodeExe" -p:BundleNodeVersion=24.20.0 `
+  -p:BundleDshSource="$dshNodeModules" -p:BundleDshVersion=0.1.5-alpha.1 `
+  -p:BundlePnpmSource="$pnpmPrefix" -p:BundlePnpmVersion=11.27.0
 ```
 
+未传 `SkipBundleRuntime=true` 时，缺少任一来源或精确版本会在 `Publish` 前直接失败。完整发布每次
+从零建立 `obj\bundle-runtime\<Configuration>`，生成并自校验 manifest，再发布到
+`runtime\versions\<runtime-id>` 并原子写入 `runtime\active.json`；
+不会读取 `D:\nodejs`、随机 npx cache 或源码树下残留的本机 `runtime\`。
+
 运行：直接执行 `DSHDesktop\bin\...\DSHDesktop.exe`（或 `publish\DSHDesktop.exe`）。
-首次启动会为当前 profile 做初始化（写入 `ProfileSeed` / 环境探测），随后拉起本地服务并内嵌界面。
+首次启动会由 `ProfileManager` 初始化当前 profile 并完成环境探测，随后拉起本地服务并内嵌界面。
+在没有既有实例时，使用 `DSHDesktop.exe --safe-mode` 可直接以隔离的 `desktop-safe` profile 启动；
+已有实例可在窗口的重启菜单
+中切换；安全 profile 首次只从 DSH 自带 `web` 模板初始化，不复制正常 profile 的插件，并使用
+独立 `.dsh-desktop-safe` home，避免普通 home 的 patch 重新引入故障插件。
+`DSHDesktop.exe --migrate-profile` 会把现有 `web` profile 的可移植配置原子复制到预备的
+`desktop` 目录，永不覆盖目标或删除源数据；由于当前 DSH CLI 保留该名称给官方 Electron 宿主，
+本地版本在专用宿主适配完成前仍以 `web` 作为正常启动 profile。
 
 > **不要用解决方案级命令**：`dotnet build DSH.slnx` / `dotnet restore DSH.slnx` 在当前状态下
 > **静默失败**（0 错误 0 警告但 exit=1，属既存问题）。请始终按**单个 csproj** 构建与测试。
@@ -85,6 +103,13 @@ dotnet build DSHDesktop\DSHDesktop.csproj -c Release `
 实测：默认构建 → `FileVersion=1.0.0.0`；注入后 → `FileVersion=1.2.3.202609141245`；
 两段式 `2.0` → `2.0.0.7`。`ProductVersion` 还会被 SDK 自动追加 git 短 SHA，便于按产物反查提交。
 
+### 发行组合契约
+
+[`eng/compatibility.json`](eng/compatibility.json) 是 Desktop/DSH/Node/pnpm/platform/profile schema
+组合的机器可读登记表，并由 [`eng/compatibility.schema.json`](eng/compatibility.schema.json) 与 Core
+校验器共同约束。只有精确锁定全部组件、完成真实 DSH 启动证据并标记为 `verified` 的组合才能
+设为 `publishable`；当前本机组合仅登记为不可发布的 `dev/development`。
+
 ### 代码签名（自签）
 
 ```powershell
@@ -109,9 +134,15 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 dotnet test DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
-共 **60 个 `[Fact]` + 6 个 `[Theory]`（31 条 `[InlineData]`）= 91 个用例**，当前全绿。
-测试工程用 `<Compile Include="..\DSHDesktop\...">` **链接同一份源码**（非副本）编译为纯 `net10.0`
-程序集，因此 `TerminalScreen` / `DesktopLog` / `VersionUpdate` 的可测性是被持续验证的。
+共 **157 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 260 个用例**，当前全绿。
+测试工程通过项目引用验证纯 `net10.0` 的 `DSHDesktop.Core`；仍属于 Windows 壳、但只依赖 BCL 的
+`TerminalScreen` / `DesktopLog` / `VersionUpdate` / WebView 安全与启动健康策略继续用源码链接测试。
+
+Windows + WebView2 真实渲染冒烟（需要交互式桌面会话）：
+
+```powershell
+dotnet run --project DSHDesktop.WebViewSmoke\DSHDesktop.WebViewSmoke.csproj -c Release
+```
 
 > 受限环境提示：测试宿主需要打开父进程句柄，在禁止进程句柄操作的沙箱下会以
 > `Win32Exception (5): 拒绝访问` 中止——这是环境限制，不是测试问题。
@@ -123,16 +154,20 @@ dotnet test DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 DSHDesktop/            应用源码（WPF 壳）
   App.xaml(.cs)          启动、单实例互斥、全局异常出口
-  MainWindow.xaml(.cs)   主窗口：服务托管、更新编排、托盘、诊断导出
+  MainWindow.xaml(.cs)   主窗口组合根：标题栏、WebView、TUI 与用户动作接线
   SingleInstanceIpc.cs   命名管道 + 命名事件双通道的「二次启动唤醒」
   DesktopRecovery.cs     last-known-good 快照的提交换入与回滚
-  UpdateBackup.cs        更新前备份 / 失败回滚（窄覆盖，见其类文档）
   DesktopLog.cs          有界日志、脱敏、诊断包导出
   PnpmSupport.cs         pnpm 探测与垫片       MarketSupport.cs  插件市场重启策略
-  VersionUpdate.cs       版本比较与更新探测     ProfileSeed.cs    profile 初始化
-  ServerState.cs         端口归属与状态         TrayMenu.cs       托盘菜单
+  VersionUpdate.cs       版本比较与更新探测
+  TrayController.cs      托盘图标、菜单命令、窗口显隐状态与资源释放
+  TrayMenu.cs            托盘菜单的深色渲染与图标字形
   Terminal/              自研 ConPTY 终端（会话 / 屏幕模型 / 渲染视图）
-DSHDesktop.Tests/      测试工程（xunit，链接 DSHDesktop 源码）
+DSHDesktop.Core/       纯 net10.0 核心（服务、运行时槽/profile、更新/恢复状态与失败分类）
+DSHDesktop.RuntimeTool/ 生成/复验 manifest、验证并激活运行时槽的构建期工具
+DSHDesktop.Tests/      测试工程（xunit，项目引用 Core，并链接少量壳层纯 BCL 源码）
+DSHDesktop.WebViewSmoke/ 真实 WebView2 导航与交互面冒烟宿主
+eng/                    发布兼容矩阵及其 JSON Schema
 DSH.slnx               解决方案文件（当前解决方案级命令不可用，见 §3）
 Directory.Build.targets 版本号与产品元数据的单一来源
 scripts/signing/       自签代码签名脚本与说明
@@ -151,24 +186,28 @@ scripts/signing/       自签代码签名脚本与说明
 | 能力 | 实现 | 备注 |
 |---|---|---|
 | 单实例 | `App.xaml.cs` + `SingleInstanceIpc.cs` | 二次启动**唤醒**已有实例而非另开窗口 |
-| 服务托管 | `MainWindow.xaml.cs` `StartAndEmbedCoreAsync` | 端口顺延、就绪判定、失败统一出口 |
+| 服务托管 | `DSHDesktop.Core/ServerHost.cs` + `MainWindow.xaml.cs` | 动态端口、进程生命周期、完整健康门与失败统一出口 |
+| 运行时槽 | Core `RuntimeManifest` + `RuntimeSlotManager` + RuntimeTool | 精确版本、逐文件 SHA-256、原子活动指针与一键回退模型 |
 | 终端 | `Terminal/ConPtySession.cs` + `TerminalScreen.cs` + `TerminalView.cs` | 自研，不依赖 `node-pty`；支持同步输出、备用屏、鼠标编码 |
-| 更新 | `VersionUpdate.cs` + `UpdateBackup.cs` | 双 registry 探测 + 备份/回滚；**窄覆盖**见类文档 |
-| 恢复 | `DesktopRecovery.cs` + 恢复助手 | 快照提交换入采用「改名中间态 → 移入 → 失败回滚」 |
+| 更新 | Core `UpdateCoordinator` + `RuntimeUpdateStager` + `VersionUpdate.cs` | 新槽 staging、manifest 复验、前端健康门、原子切换/回退和失败候选隔离 |
+| 恢复 | Core `RecoveryCoordinator` + `DesktopRecovery.cs` + 恢复助手 | Core 管自动重启/人工接管策略；壳层管理快照、插件禁用与回滚 |
+| 托盘 | `TrayController.cs` + `TrayMenu.cs` | 控制器管理显隐状态、动态菜单、图标句柄和确定性释放 |
 | 日志 | `DesktopLog.cs` | 配额清理 + 脱敏（长 hex/base64 会被整体遮蔽）+ 诊断 zip |
 
 ---
 
 ## 7. 已知问题（诚实清单）
 
-1. **硬编码绝对路径**：`MainWindow.xaml.cs` 与 `DSHDesktop.csproj` 内联了 `D:\nodejs` 与
-   `npm-cache\_npx\<hash>`；换机器需自行调整或走候选链。
-2. **无启动健康门**：拿到 URL 即提交 last-known-good，不等 `NavigationCompleted` 成功。
+1. **CI 尚未配置锁定运行时来源**：流水线当前只发布 `SkipBundleRuntime=true` 的壳；完整发布门已经
+   fail-closed，但仍需由可复现下载/仓库缓存提供 Node、DSH 与 pnpm 输入。
+2. **安装态健康门尚未进入 CI**：单元测试与独立真实 WebView2 冒烟已通过，仍缺安装器中的完整冒烟。
 3. **解决方案级命令不可用**（见 §3）。
 4. **诊断包不受日志配额管理**，且没有保留份数上限。
 5. **`.bak-<时间戳>` 快照无上限无清理**。
-6. `MainWindow.xaml.cs` 已超 2,300 行，属 god class，拆分计划（抽 `ServerHost` /
-   `UpdateCoordinator` / `TrayController`）尚未启动。
+6. `MainWindow.xaml.cs` 仍然偏大；M2 协调器与 `TrayController` 已抽离，但标题栏弹层、
+   WebView 事件适配、TUI 动作和更新流程的壳层副作用仍集中在窗口文件中。
+7. 更新已不再修改活动槽，但 staging 安装目前仍依赖系统 npm；正式发行还需把包下载器纳入锁定运行时，
+   并为更新元数据和载荷增加可信签名，不能只依赖安装后的 manifest 哈希。
 
 ---
 

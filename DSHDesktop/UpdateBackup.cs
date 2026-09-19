@@ -25,7 +25,7 @@ internal static class UpdateBackup
     /// <summary>备份根目录名；固定名称即「同一时刻至多一份备份」。</summary>
     internal const string BackupDirName = ".dsh-desktop-update-backup";
 
-    /// <summary>被备份/还原的资产，均为相对 <c>LauncherInstallDir()</c> 的明确列举项。</summary>
+    /// <summary>被备份/还原的资产，均为相对 RuntimeManager 解析出的安装根目录的明确列举项。</summary>
     private static readonly string[] Assets =
     {
         "package.json",
@@ -34,7 +34,7 @@ internal static class UpdateBackup
         Path.Combine("node_modules", "@deepseek-ai", "dsh"),
     };
 
-    /// <summary>备份根目录的完整路径（命名规则：<c>&lt;LauncherInstallDir()&gt;/.dsh-desktop-update-backup</c>）。</summary>
+    /// <summary>备份根目录的完整路径（命名规则：<c>&lt;install-root&gt;/.dsh-desktop-update-backup</c>）。</summary>
     internal static string Root(string installDir) => Path.Combine(installDir, BackupDirName);
 
     /// <summary>
