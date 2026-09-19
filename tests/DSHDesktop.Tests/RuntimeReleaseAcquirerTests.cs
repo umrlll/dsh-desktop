@@ -11,6 +11,61 @@ namespace DSHDesktop.Tests;
 public class RuntimeReleaseAcquirerTests
 {
     [Fact]
+    public async Task ReleaseUpdater_AcquiresAndActivatesVerifiedRuntimeCandidate()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var payload = CreatePayload(temp.Path);
+        var descriptor = Descriptor(payload.Bytes);
+        using var http = new HttpClient(Routes(descriptor, key, payload.Bytes));
+        var runtimeRoot = Path.Combine(temp.Path, "runtime");
+
+        var result = await Updater(http, runtimeRoot).AcquireAndActivateAsync(Source(key));
+
+        Assert.True(result.Success);
+        Assert.Equal(RuntimeUpdateStageStatus.Activated, result.Adoption?.Status);
+        Assert.Equal(descriptor.RuntimeId, new RuntimeSlotManager(runtimeRoot)
+            .ResolveActive().Selection?.ActiveRuntimeId);
+    }
+
+    [Fact]
+    public async Task ReleaseUpdater_DoesNotActivateManifestMismatch()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var payload = CreatePayload(temp.Path, manifestDshVersion: "0.1.5-alpha.1");
+        var descriptor = Descriptor(payload.Bytes);
+        using var http = new HttpClient(Routes(descriptor, key, payload.Bytes));
+        var runtimeRoot = Path.Combine(temp.Path, "runtime");
+
+        var result = await Updater(http, runtimeRoot).AcquireAndActivateAsync(Source(key));
+
+        Assert.Equal(RuntimeReleaseUpdateStatus.AcquisitionFailed, result.Status);
+        Assert.Null(result.Adoption);
+        Assert.Equal(RuntimeSlotStatus.MissingSelection, new RuntimeSlotManager(runtimeRoot)
+            .ResolveActive().Status);
+    }
+
+    [Fact]
+    public async Task ReleaseUpdater_PreservesStagedCandidateOnExistingSlotConflict()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var payload = CreatePayload(temp.Path);
+        var descriptor = Descriptor(payload.Bytes);
+        using var http = new HttpClient(Routes(descriptor, key, payload.Bytes));
+        var runtimeRoot = Path.Combine(temp.Path, "runtime");
+        RuntimeSlotManagerTests.CreateSlot(runtimeRoot, descriptor.RuntimeId, "different-build");
+
+        var result = await Updater(http, runtimeRoot).AcquireAndActivateAsync(Source(key));
+
+        Assert.Equal(RuntimeReleaseUpdateStatus.CandidateRejected, result.Status);
+        Assert.Equal(RuntimeUpdateStageStatus.CandidateConflict, result.Adoption?.Status);
+        Assert.Single(Directory.GetDirectories(Path.Combine(
+            runtimeRoot, RuntimeSlotManager.StagingDirectoryName), ".runtime-*"));
+    }
+
+    [Fact]
     public async Task AcquireAsync_ProducesVerifiedManifestCandidateAndRemovesArchive()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -84,6 +139,9 @@ public class RuntimeReleaseAcquirerTests
 
     private static RuntimeReleaseAcquirer Acquirer(HttpClient http)
         => new(new RuntimeReleaseFeedClient(http), new RuntimePayloadExtractor());
+
+    private static RuntimeReleaseUpdater Updater(HttpClient http, string runtimeRoot)
+        => new(runtimeRoot, Acquirer(http));
 
     private static RuntimeReleaseSource Source(ECDsa key) => Source(new Dictionary<string, string>
     {
