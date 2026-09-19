@@ -73,4 +73,15 @@
              Text="DshStampVersion: Version=$(_DshSemVer) Assembly=$(AssemblyVersion) File=$(FileVersion)" />
   </Target>
 
+  <!-- 发布目录必须自带本仓库许可和第三方声明；仅作用于桌面壳，避免污染 Core/测试/工具产物。 -->
+  <Target Name="CopyReleaseLegalNotices" AfterTargets="Publish"
+          Condition="'$(MSBuildProjectName)' == 'DSHDesktop'">
+    <ItemGroup>
+      <_ReleaseLegalFiles Include="$(MSBuildThisFileDirectory)LICENSE;$(MSBuildThisFileDirectory)NOTICE.md" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ReleaseLegalFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(PublishDir)LICENSE') Or !Exists('$(PublishDir)NOTICE.md')"
+           Text="Release output is missing LICENSE or NOTICE.md." />
+  </Target>
+
 </Project>

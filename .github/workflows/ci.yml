@@ -153,6 +153,8 @@ jobs:
           path: |
             publish/DSHDesktop.exe
             publish/DSHDesktop.dll
+            publish/LICENSE
+            publish/NOTICE.md
             publish/DSHDesktop.spdx.json
             publish/SHA256SUMS.txt
           if-no-files-found: error

@@ -56,7 +56,7 @@ dotnet publish src\DSHDesktop\DSHDesktop.csproj -c Release `
 
 > **当前 CI 产物不能直接安装，也不是完整 Portable 版本。** CI 使用
 > `SkipBundleRuntime=true`，没有携带 Node、DSH 和 pnpm；而且只有配置签名 Secrets 时才执行上传，
-> 当前上传清单也仅含 `DSHDesktop.exe` 与 `DSHDesktop.dll`，不足以代表完整 `publish` 目录。
+> 当前上传清单包含桌面壳、`LICENSE`、`NOTICE.md`、SPDX SBOM 与摘要，但仍不足以代表完整运行时发布目录。
 > CI 在这一阶段承担的是编译、测试和发布规则验证，不应把其 artifact 当成正式发行包。
 
 未传 `SkipBundleRuntime=true` 时，缺少任一来源或精确版本会在 `Publish` 前直接失败。完整发布每次
@@ -139,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 dotnet test tests\DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
-共 **209 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 312 个用例**，当前全绿。
+共 **210 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 313 个用例**，当前全绿。
 测试工程通过项目引用验证纯 `net10.0` 的 `DSHDesktop.Core`；仍属于 Windows 壳、但只依赖 BCL 的
 `TerminalScreen` / `DesktopLog` / `VersionUpdate` / WebView 安全与启动健康策略继续用源码链接测试。
 
@@ -209,7 +209,7 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 
 | 阶段 | 状态 | 实施内容 | 通过标准 |
 |---|---|---|---|
-| CI 验证基线 | 已有 | Windows 构建、312 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
+| CI 验证基线 | 已有 | Windows 构建、313 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
 | M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；已验签下载、安全原子解包、manifest 身份复验和候选槽接纳已形成单一更新入口；发布源配置模板/校验器已就绪，待提供真实信任根、端点和 UI 接线 | 独立 profile、更新、健康失败回退均可验证 |
 | M5-A Portable | 待实施 | CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入；生成 `win-x64` 完整发布目录和 Portable ZIP；上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
 | M5-B 安装器 | 待实施 | 首选 Inno Setup 生成按用户安装的 `Setup.exe`；统一 Desktop、runtime manifest 与安装器版本身份 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |

@@ -52,6 +52,18 @@ public class ReleaseBuildContractTests
     }
 
     [Fact]
+    public void Publish_CopiesLicenseAndNoticeIntoReleaseAssets()
+    {
+        var targets = File.ReadAllText(Path.Combine(SourceScanner.RepoRoot, "Directory.Build.targets"));
+        var workflow = File.ReadAllText(Path.Combine(SourceScanner.RepoRoot, ".github", "workflows", "ci.yml"));
+
+        Assert.Contains("CopyReleaseLegalNotices", targets);
+        Assert.Contains("LICENSE;$(MSBuildThisFileDirectory)NOTICE.md", targets);
+        Assert.Contains("publish/LICENSE", workflow);
+        Assert.Contains("publish/NOTICE.md", workflow);
+    }
+
+    [Fact]
     public void PackagedPnpm_PrecedesMachineProbeAndNetworkFallback()
     {
         var source = File.ReadAllText(SourceScanner.ProductFile("PnpmSupport.cs"));
