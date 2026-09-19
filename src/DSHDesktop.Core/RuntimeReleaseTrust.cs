@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace DSHDesktop.Core;
@@ -95,6 +96,18 @@ public static class RuntimeReleaseTrust
         return Encoding.UTF8.GetBytes(string.Join("\n", fields.Select(EncodeField)) + "\n");
     }
 
+    /// <summary>Parses the wire document using its stable camel-case representation.</summary>
+    public static SignedRuntimeRelease Parse(string json)
+        => JsonSerializer.Deserialize<SignedRuntimeRelease>(json, JsonOptions)
+            ?? throw new InvalidDataException("release 元数据为空。");
+
+    /// <summary>Serializes the wire document used by release publishers and test fixtures.</summary>
+    public static string Serialize(SignedRuntimeRelease release)
+    {
+        ArgumentNullException.ThrowIfNull(release);
+        return JsonSerializer.Serialize(release, JsonOptions);
+    }
+
     public static RuntimeReleaseVerification Verify(
         SignedRuntimeRelease release,
         IReadOnlyDictionary<string, string> trustedPublicKeys,
@@ -184,4 +197,10 @@ public static class RuntimeReleaseTrust
 
     private static string EncodeField(string value)
         => Convert.ToBase64String(Encoding.UTF8.GetBytes(value ?? string.Empty));
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+    };
 }
