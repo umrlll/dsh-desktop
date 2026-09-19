@@ -19,6 +19,7 @@ internal static class Program
                 "verify" => Verify(options),
                 "activate" => Activate(options),
                 "checksums" => Checksums(options),
+                "sign-release" => SignRelease(options),
                 _ => Usage(),
             };
         }
@@ -83,6 +84,30 @@ internal static class Program
             throw new InvalidDataException("Release checksum verification failed: " + string.Join(
                 ", ", issues.Select(issue => issue.Code + "(" + issue.Path + ")")));
         Console.WriteLine($"runtime-manifest: wrote {checksums.Entries.Count} release checksums to {output}");
+        return 0;
+    }
+
+    private static int SignRelease(IReadOnlyDictionary<string, string> options)
+    {
+        var descriptorPath = Required(options, "descriptor");
+        var privateKeyPath = Required(options, "private-key");
+        var output = Path.GetFullPath(Required(options, "output"));
+        var descriptor = RuntimeReleasePublisher.ParseDescriptor(File.ReadAllText(descriptorPath));
+        var release = RuntimeReleasePublisher.Sign(descriptor, File.ReadAllText(privateKeyPath));
+        var parent = Path.GetDirectoryName(output)
+            ?? throw new InvalidDataException("Signed release output has no parent directory.");
+        Directory.CreateDirectory(parent);
+        var temporary = output + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllText(temporary, RuntimeReleaseTrust.Serialize(release));
+            File.Move(temporary, output, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { /* best effort */ }
+        }
+        Console.WriteLine("runtime-manifest: signed release metadata to " + output);
         return 0;
     }
 
@@ -162,7 +187,7 @@ internal static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums --name value ...");
+        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|sign-release --name value ...");
         return 2;
     }
 }
