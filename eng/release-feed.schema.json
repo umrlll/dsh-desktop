@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DSH Desktop signed runtime release feed configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "metadataUrl", "channel", "trustedPublicKeys"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "metadataUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "channel": { "enum": ["stable", "beta"] },
+    "trustedPublicKeys": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 8,
+      "additionalProperties": { "type": "string", "minLength": 32 }
+    }
+  }
+}

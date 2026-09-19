@@ -1,0 +1,9 @@
+{
+  "$schema": "./release-feed.schema.json",
+  "schemaVersion": 1,
+  "metadataUrl": "https://updates.example.invalid/dsh-desktop/beta.json",
+  "channel": "beta",
+  "trustedPublicKeys": {
+    "replace-with-release-key-id": "-----BEGIN PUBLIC KEY-----\nREPLACE_WITH_P256_PUBLIC_KEY\n-----END PUBLIC KEY-----"
+  }
+}

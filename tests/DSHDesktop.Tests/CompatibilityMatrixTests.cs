@@ -20,7 +20,7 @@ public class CompatibilityMatrixTests
         Assert.Null(runtime.PnpmVersion);
         Assert.Equal("development", runtime.Status);
         Assert.False(runtime.Publishable);
-        Assert.Equal(299, runtime.Evidence.UnitTestCount);
+        Assert.Equal(303, runtime.Evidence.UnitTestCount);
     }
 
     [Fact]
