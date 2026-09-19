@@ -145,7 +145,7 @@ public sealed class RuntimeUpdateStager
                     RuntimeUpdateStageStatus.ActivatedExisting,
                     manifest.RuntimeId,
                     slot,
-                    MaintenanceWarning: DescribeMaintenance(slots.PruneInactiveAndStaging()));
+                    MaintenanceWarning: DescribeMaintenance(slots));
             }
 
             Directory.Move(candidate, slot);
@@ -160,7 +160,7 @@ public sealed class RuntimeUpdateStager
                 RuntimeUpdateStageStatus.Activated,
                 manifest.RuntimeId,
                 slot,
-                MaintenanceWarning: DescribeMaintenance(slots.PruneInactiveAndStaging()));
+                MaintenanceWarning: DescribeMaintenance(slots));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -270,7 +270,7 @@ public sealed class RuntimeUpdateStager
                         runtimeId,
                         candidateSlot,
                         existingActivation.Error);
-                var existingMaintenanceWarning = DescribeMaintenance(slots.PruneInactiveAndStaging());
+                var existingMaintenanceWarning = DescribeMaintenance(slots);
                 return new RuntimeUpdateStageResult(
                     RuntimeUpdateStageStatus.ActivatedExisting,
                     runtimeId,
@@ -328,7 +328,7 @@ public sealed class RuntimeUpdateStager
                     runtimeId,
                     candidateSlot,
                     activation.Error);
-            var activatedMaintenanceWarning = DescribeMaintenance(slots.PruneInactiveAndStaging());
+            var activatedMaintenanceWarning = DescribeMaintenance(slots);
             return new RuntimeUpdateStageResult(
                 RuntimeUpdateStageStatus.Activated,
                 runtimeId,
@@ -486,6 +486,16 @@ public sealed class RuntimeUpdateStager
     private static string DescribeIssues(IEnumerable<RuntimeManifestIssue> issues)
         => string.Join("；", issues.Take(5).Select(issue =>
             issue.Code + (issue.Path == null ? string.Empty : "(" + issue.Path + ")")));
+
+    private static string? DescribeMaintenance(RuntimeSlotManager slots)
+    {
+        var store = slots.PruneInactiveAndStaging();
+        var rejected = slots.PruneRejected();
+        if (store.Success && rejected.Success) return null;
+        var errors = store.Errors.Concat(rejected.Errors).Take(3);
+        return "Runtime store maintenance did not finish; active slots were retained: "
+            + string.Join(", ", errors);
+    }
 
     private static string? DescribeMaintenance(RuntimeStoreMaintenanceResult result)
         => result.Success

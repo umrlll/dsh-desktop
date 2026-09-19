@@ -240,6 +240,39 @@ public class RuntimeUpdateStagerTests
     }
 
     [Fact]
+    public async Task StageAndActivate_PrunesRejectedEvidenceBeyondDefaultRetention()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var sourceRoot = Path.Combine(temp.Path, "installed-runtime");
+        var writableRoot = Path.Combine(temp.Path, "writable-runtime");
+        var sourceSlot = RuntimeSlotManagerTests.CreateSlot(sourceRoot, "runtime-a", "original");
+        var rejectedRoot = Path.Combine(writableRoot, "rejected");
+        var rejected = Enumerable.Range(0, 4).Select(index =>
+        {
+            var directory = Path.Combine(rejectedRoot,
+                "runtime-failed-2026091900000000" + index + "-abcdef1" + index);
+            Directory.CreateDirectory(directory);
+            Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow.AddDays(-8 - index));
+            return directory;
+        }).ToArray();
+
+        var result = await new RuntimeUpdateStager(writableRoot).StageAndActivateAsync(
+            sourceSlot,
+            Path.Combine(sourceSlot, RuntimeManifest.FileName),
+            "0.1.6-alpha.1",
+            (context, _) =>
+            {
+                WriteVersion(context.DshInstallDirectory, "0.1.6-alpha.1");
+                return Task.FromResult(RuntimeUpdateInstallResult.Ok());
+            });
+
+        Assert.True(result.Success);
+        Assert.Null(result.MaintenanceWarning);
+        Assert.Equal(3, rejected.Count(Directory.Exists));
+        Assert.False(Directory.Exists(rejected[3]));
+    }
+
+    [Fact]
     public async Task StageAndActivate_RejectsDifferentBuildWithSameBaselineRuntimeId()
     {
         using var temp = new RuntimeSlotManagerTests.TempDirectory();
