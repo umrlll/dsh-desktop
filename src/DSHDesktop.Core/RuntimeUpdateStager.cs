@@ -9,6 +9,8 @@ public enum RuntimeUpdateStageStatus
     ActivatedExisting,
     InvalidRequest,
     SourceInvalid,
+    CandidateOutsideStaging,
+    CandidateInvalid,
     CandidateConflict,
     InstallFailed,
     VersionMismatch,
@@ -58,6 +60,116 @@ public sealed class RuntimeUpdateStager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runtimeRoot);
         _runtimeRoot = Path.GetFullPath(runtimeRoot);
+    }
+
+    /// <summary>
+    /// Adopts a complete runtime candidate produced inside this store's staging directory. The
+    /// candidate is re-verified before it is moved into <c>versions</c>; activation remains
+    /// atomic and preserves the currently active verified slot as the rollback target.
+    /// </summary>
+    public RuntimeUpdateStageResult AdoptAndActivateCandidate(string candidateDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(candidateDirectory);
+        var stagingRoot = Path.GetFullPath(Path.Combine(_runtimeRoot, "staging"));
+        var candidate = Path.GetFullPath(candidateDirectory);
+        var candidateParent = Path.GetDirectoryName(candidate);
+        if (!string.Equals(candidateParent, stagingRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return new RuntimeUpdateStageResult(
+                RuntimeUpdateStageStatus.CandidateOutsideStaging,
+                Error: "Only a direct child of this runtime store's staging directory may be adopted.");
+        }
+        if (!Directory.Exists(candidate))
+        {
+            return new RuntimeUpdateStageResult(
+                RuntimeUpdateStageStatus.CandidateInvalid,
+                Error: "The runtime candidate directory does not exist.");
+        }
+
+        RuntimeManifest manifest;
+        try
+        {
+            if (ContainsReparsePoint(candidate))
+            {
+                return new RuntimeUpdateStageResult(
+                    RuntimeUpdateStageStatus.CandidateInvalid,
+                    Error: "The runtime candidate contains a reparse point.");
+            }
+            manifest = RuntimeManifest.Load(Path.Combine(candidate, RuntimeManifest.FileName));
+            var issues = manifest.Verify(candidate);
+            if (issues.Count > 0 || !RuntimeSlotManager.IsSafeRuntimeId(manifest.RuntimeId))
+            {
+                return new RuntimeUpdateStageResult(
+                    RuntimeUpdateStageStatus.CandidateInvalid,
+                    manifest.RuntimeId,
+                    candidate,
+                    issues.Count > 0
+                        ? DescribeIssues(issues)
+                        : "The candidate manifest has an unsafe runtime ID.");
+            }
+        }
+        catch (Exception ex)
+        {
+            return new RuntimeUpdateStageResult(
+                RuntimeUpdateStageStatus.CandidateInvalid,
+                Error: ex.Message);
+        }
+
+        var versionsRoot = Path.Combine(_runtimeRoot, RuntimeSlotManager.VersionsDirectoryName);
+        var slot = Path.Combine(versionsRoot, manifest.RuntimeId);
+        try
+        {
+            Directory.CreateDirectory(versionsRoot);
+            var slots = new RuntimeSlotManager(_runtimeRoot);
+            if (Directory.Exists(slot))
+            {
+                var existing = slots.Resolve(manifest.RuntimeId, verifyFiles: true);
+                if (!existing.IsReady || !ManifestsEquivalent(manifest, existing.Manifest))
+                {
+                    return new RuntimeUpdateStageResult(
+                        RuntimeUpdateStageStatus.CandidateConflict,
+                        manifest.RuntimeId,
+                        slot,
+                        "An existing slot has the same runtime ID but differs from the verified candidate.");
+                }
+
+                Directory.Delete(candidate, recursive: true);
+                var activation = slots.Activate(manifest.RuntimeId);
+                if (!activation.Success)
+                    return new RuntimeUpdateStageResult(
+                        RuntimeUpdateStageStatus.ActivationFailed,
+                        manifest.RuntimeId,
+                        slot,
+                        activation.Error);
+                return new RuntimeUpdateStageResult(
+                    RuntimeUpdateStageStatus.ActivatedExisting,
+                    manifest.RuntimeId,
+                    slot,
+                    MaintenanceWarning: DescribeMaintenance(slots.PruneInactiveAndStaging()));
+            }
+
+            Directory.Move(candidate, slot);
+            var activated = slots.Activate(manifest.RuntimeId);
+            if (!activated.Success)
+                return new RuntimeUpdateStageResult(
+                    RuntimeUpdateStageStatus.ActivationFailed,
+                    manifest.RuntimeId,
+                    slot,
+                    activated.Error);
+            return new RuntimeUpdateStageResult(
+                RuntimeUpdateStageStatus.Activated,
+                manifest.RuntimeId,
+                slot,
+                MaintenanceWarning: DescribeMaintenance(slots.PruneInactiveAndStaging()));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new RuntimeUpdateStageResult(
+                RuntimeUpdateStageStatus.ActivationFailed,
+                manifest.RuntimeId,
+                slot,
+                ex.Message);
+        }
     }
 
     public async Task<RuntimeUpdateStageResult> StageAndActivateAsync(
@@ -326,6 +438,23 @@ public sealed class RuntimeUpdateStager
             Directory.CreateDirectory(parent);
             File.Copy(source, destination, overwrite: false);
         }
+    }
+
+    private static bool ContainsReparsePoint(string root)
+    {
+        var pending = new Queue<string>();
+        pending.Enqueue(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Dequeue();
+            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) return true;
+            foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+            {
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return true;
+                if (Directory.Exists(path)) pending.Enqueue(path);
+            }
+        }
+        return false;
     }
 
     private static string BuildRuntimeId(RuntimeManifest source, string dshVersion)

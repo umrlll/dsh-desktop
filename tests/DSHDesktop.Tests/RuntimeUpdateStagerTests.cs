@@ -6,6 +6,74 @@ namespace DSHDesktop.Tests;
 public class RuntimeUpdateStagerTests
 {
     [Fact]
+    public void AdoptCandidate_MovesVerifiedStagedRuntimeAndPreservesRollbackSlot()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var writableRoot = Path.Combine(temp.Path, "writable-runtime");
+        RuntimeSlotManagerTests.CreateSlot(writableRoot, "runtime-a", "a");
+        Assert.True(new RuntimeSlotManager(writableRoot).Activate("runtime-a").Success);
+        var candidate = CreateStagedCandidate(temp.Path, writableRoot, "runtime-b", "b");
+
+        var result = new RuntimeUpdateStager(writableRoot).AdoptAndActivateCandidate(candidate);
+        var active = new RuntimeSlotManager(writableRoot).ResolveActive();
+
+        Assert.Equal(RuntimeUpdateStageStatus.Activated, result.Status);
+        Assert.Equal("runtime-b", active.Selection?.ActiveRuntimeId);
+        Assert.Equal("runtime-a", active.Selection?.PreviousRuntimeId);
+        Assert.False(Directory.Exists(candidate));
+        Assert.True(Directory.Exists(Path.Combine(
+            writableRoot, RuntimeSlotManager.VersionsDirectoryName, "runtime-b")));
+    }
+
+    [Fact]
+    public void AdoptCandidate_RejectsDirectoryOutsideItsStagingRoot()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var writableRoot = Path.Combine(temp.Path, "writable-runtime");
+        var outside = RuntimeSlotManagerTests.CreateSlot(Path.Combine(temp.Path, "outside"), "runtime-b", "b");
+
+        var result = new RuntimeUpdateStager(writableRoot).AdoptAndActivateCandidate(outside);
+
+        Assert.Equal(RuntimeUpdateStageStatus.CandidateOutsideStaging, result.Status);
+        Assert.True(Directory.Exists(outside));
+        Assert.False(Directory.Exists(Path.Combine(writableRoot, RuntimeSlotManager.VersionsDirectoryName)));
+    }
+
+    [Fact]
+    public void AdoptCandidate_LeavesDamagedStagedDirectoryForDiagnosis()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var writableRoot = Path.Combine(temp.Path, "writable-runtime");
+        var candidate = CreateStagedCandidate(temp.Path, writableRoot, "runtime-b", "b");
+        File.WriteAllText(Path.Combine(candidate, "node", "node.exe"), "tampered");
+
+        var result = new RuntimeUpdateStager(writableRoot).AdoptAndActivateCandidate(candidate);
+
+        Assert.Equal(RuntimeUpdateStageStatus.CandidateInvalid, result.Status);
+        Assert.True(Directory.Exists(candidate));
+        Assert.False(Directory.Exists(Path.Combine(
+            writableRoot, RuntimeSlotManager.VersionsDirectoryName, "runtime-b")));
+    }
+
+    [Fact]
+    public void AdoptCandidate_ReusesOnlyEquivalentExistingSlot()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var writableRoot = Path.Combine(temp.Path, "writable-runtime");
+        RuntimeSlotManagerTests.CreateSlot(writableRoot, "runtime-a", "a");
+        RuntimeSlotManagerTests.CreateSlot(writableRoot, "runtime-b", "b");
+        Assert.True(new RuntimeSlotManager(writableRoot).Activate("runtime-a").Success);
+        var candidate = CreateStagedCandidate(temp.Path, writableRoot, "runtime-b", "b");
+
+        var result = new RuntimeUpdateStager(writableRoot).AdoptAndActivateCandidate(candidate);
+
+        Assert.Equal(RuntimeUpdateStageStatus.ActivatedExisting, result.Status);
+        Assert.False(Directory.Exists(candidate));
+        Assert.Equal("runtime-b", new RuntimeSlotManager(writableRoot)
+            .ResolveActive().Selection?.ActiveRuntimeId);
+    }
+
+    [Fact]
     public async Task StageAndActivate_CopiesBaselineBuildsCandidateAndSwitchesAtomically()
     {
         using var temp = new RuntimeSlotManagerTests.TempDirectory();
@@ -202,5 +270,20 @@ public class RuntimeUpdateStagerTests
             dshInstallDirectory,
             "node_modules", "@deepseek-ai", "dsh", "package.json");
         File.WriteAllText(manifest, "{\"version\":\"" + version + "\"}");
+    }
+
+    private static string CreateStagedCandidate(
+        string root,
+        string writableRoot,
+        string runtimeId,
+        string content)
+    {
+        var sourceRoot = Path.Combine(root, "candidate-source-" + runtimeId + "-" + content);
+        var source = RuntimeSlotManagerTests.CreateSlot(sourceRoot, runtimeId, content);
+        var staging = Path.Combine(writableRoot, RuntimeSlotManager.StagingDirectoryName);
+        Directory.CreateDirectory(staging);
+        var candidate = Path.Combine(staging, ".runtime-" + runtimeId + "-" + content);
+        Directory.Move(source, candidate);
+        return candidate;
     }
 }
