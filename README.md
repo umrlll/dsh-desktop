@@ -15,14 +15,14 @@ Chromium；桌面壳自身较小，完整发布载荷会另外携带锁定的 No
 
 | 维度 | 现状 |
 |---|---|
-| 发布状态 | **没有任何发行版**：无安装器；版本号治理已落地，但尚未建立正式发布通道 |
+| 发布状态 | **没有任何发行版**：已有受完整 runtime 校验保护的安装器定义与打包入口，但尚未产出或分发正式安装包 |
 | 平台 | **仅 Windows x64**（依赖 WebView2 与 WinForms 托盘，未做跨平台抽象） |
 | 分发方式 | 完整发布设计为 **Portable 目录/ZIP + 自带 `runtime\` 载荷**；当前 CI 只构筑桌面壳，不是可安装包 |
 | 协作入口 | GitHub 仓库已启用 Windows CI：构建、测试、shell-only publish，以及配置证书后的可选签名 |
 | 签名 | **仅自签**：签名与时间戳成立，但**不消除 SmartScreen 警告**（见 §3） |
 | 定位 | 个人自用/实验；**不建议**在未审阅源码的情况下用于生产或分发 |
 
-已知缺口（尚未实施）：完整 CI 运行时输入、Portable ZIP、安装器、可信发行签名和 Desktop 专用宿主适配。CI 已在可选签名后为 shell 发布目录生成 SPDX SBOM 与 `SHA256SUMS.txt`；可安装发布物仍待安装器与锁定 runtime 输入。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
+已知缺口（尚未实施）：完整 CI 运行时输入、实际 Portable/安装包资产、可信发行签名和 Desktop 专用宿主适配。CI 已在可选签名后为 shell 发布目录生成 SPDX SBOM 与 `SHA256SUMS.txt`；安装器定义和打包入口会拒绝 shell-only 或损坏 runtime，但可安装发布物仍待锁定 runtime 输入。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
 **已经落地**（见 §3、§6、§7）。
 
 ---
@@ -58,6 +58,18 @@ dotnet publish src\DSHDesktop\DSHDesktop.csproj -c Release `
 > `SkipBundleRuntime=true`，没有携带 Node、DSH 和 pnpm；而且只有配置签名 Secrets 时才执行上传，
 > 当前上传清单包含桌面壳、`LICENSE`、`NOTICE.md`、SPDX SBOM 与摘要，但仍不足以代表完整运行时发布目录。
 > CI 在这一阶段承担的是编译、测试和发布规则验证，不应把其 artifact 当成正式发行包。
+
+完整 Portable 发布目录准备完成后，必须使用统一入口生成安装器；它会在调用 Inno Setup 前验证
+`runtime\active.json`、被选中的 immutable slot 和 runtime manifest 中的每一个文件，并拒绝把输出写回源目录：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-installer.ps1 `
+  -SourceDir C:\release\DSHDesktop-portable `
+  -Version 1.0.0 `
+  -OutputDir C:\release\artifacts
+```
+
+该命令不是正式发布授权：输入仍须先通过兼容矩阵、输入锁、签名与干净机器安装/升级/卸载验收。
 
 未传 `SkipBundleRuntime=true` 时，缺少任一来源或精确版本会在 `Publish` 前直接失败。完整发布每次
 从零建立 `obj\bundle-runtime\<Configuration>`，生成并自校验 manifest，再发布到
@@ -139,7 +151,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 dotnet test tests\DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
-共 **217 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 320 个用例**，当前全绿。
+共 **218 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 321 个用例**，当前全绿。
 测试工程通过项目引用验证纯 `net10.0` 的 `DSHDesktop.Core`；仍属于 Windows 壳、但只依赖 BCL 的
 `TerminalScreen` / `DesktopLog` / `VersionUpdate` / WebView 安全与启动健康策略继续用源码链接测试。
 
@@ -209,10 +221,10 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 
 | 阶段 | 状态 | 实施内容 | 通过标准 |
 |---|---|---|---|
-| CI 验证基线 | 已有 | Windows 构建、320 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
+| CI 验证基线 | 已有 | Windows 构建、321 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
 | M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；已验签下载、安全原子解包、manifest 身份复验和候选槽接纳已形成单一更新入口；发布源配置模板/校验器已就绪，待提供真实信任根、端点和 UI 接线 | 独立 profile、更新、健康失败回退均可验证 |
 | M5-A Portable | 进行中 | 已实现仅接纳完整、已验证 runtime 槽的确定性 Portable ZIP 工具及 HTTPS/SHA-256 输入锁；待 CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入并上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
-| M5-B 安装器 | 进行中 | 已新增 Inno Setup 按用户安装器定义，编译时拒绝 shell-only 发布目录并默认保留用户数据；待完整 Portable 输入、静默安装/升级/卸载验证与可信签名 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
+| M5-B 安装器 | 进行中 | 已新增 Inno Setup 按用户安装器定义与唯一打包入口；入口会验证完整 runtime manifest、拒绝 shell-only/损坏输入及源目录内输出，并默认保留用户数据；待完整 Portable 输入、静默安装/升级/卸载验证与可信签名 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
 | M5-C 正式发布 | 进行中 | CI 已生成 SPDX SBOM 与 `SHA256SUMS.txt`；待可信 Authenticode、RFC3161、完整运行时资产、NOTICE 审计与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
 
 发布门的简化顺序为：

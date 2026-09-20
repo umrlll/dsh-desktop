@@ -5,6 +5,7 @@ namespace DSHDesktop.Core;
 public enum PortableReleaseArchiveStatus
 {
     Created,
+    Validated,
     InvalidRequest,
     ShellIncomplete,
     RuntimeNotReady,
@@ -18,7 +19,7 @@ public sealed record PortableReleaseArchiveResult(
     int FileCount = 0,
     string? Error = null)
 {
-    public bool Success => Status == PortableReleaseArchiveStatus.Created;
+    public bool Success => Status is PortableReleaseArchiveStatus.Created or PortableReleaseArchiveStatus.Validated;
 }
 
 /// <summary>
@@ -38,24 +39,10 @@ public static class PortableReleaseArchive
         {
             var root = Path.GetFullPath(publishRoot);
             var output = Path.GetFullPath(outputPath);
-            if (!Directory.Exists(root))
-                return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.InvalidRequest, Error: "Publish root does not exist.");
             if (IsWithinRoot(root, output))
                 return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.InvalidRequest, Error: "Portable output must be outside the publish root.");
-            if (!File.Exists(Path.Combine(root, "DSHDesktop.exe"))
-                || !File.Exists(Path.Combine(root, "DSHDesktop.dll")))
-            {
-                return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.ShellIncomplete, Error: "Publish root is missing the desktop shell.");
-            }
-
-            var runtime = new RuntimeSlotManager(Path.Combine(root, "runtime")).ResolveActive(verifyFiles: true);
-            if (!runtime.IsReady)
-            {
-                return new PortableReleaseArchiveResult(
-                    PortableReleaseArchiveStatus.RuntimeNotReady,
-                    Error: runtime.Error ?? runtime.Status.ToString());
-            }
-
+            var validation = Validate(root);
+            if (!validation.Success) return validation;
             if (!TryCollectFiles(root, out var files, out var error))
                 return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.UnsafePath, Error: error);
 
@@ -84,6 +71,43 @@ public static class PortableReleaseArchive
             {
                 try { if (File.Exists(temporary)) File.Delete(temporary); } catch { /* best effort */ }
             }
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.Failed, Error: ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that a publish directory is eligible to become a Portable ZIP or installer.
+    /// This has no output side effects and is the gate used by packaging automation.
+    /// </summary>
+    public static PortableReleaseArchiveResult Validate(string publishRoot)
+    {
+        if (string.IsNullOrWhiteSpace(publishRoot))
+            return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.InvalidRequest, Error: "Publish root is required.");
+        try
+        {
+            var root = Path.GetFullPath(publishRoot);
+            if (!Directory.Exists(root))
+                return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.InvalidRequest, Error: "Publish root does not exist.");
+            if (!File.Exists(Path.Combine(root, "DSHDesktop.exe"))
+                || !File.Exists(Path.Combine(root, "DSHDesktop.dll")))
+            {
+                return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.ShellIncomplete, Error: "Publish root is missing the desktop shell.");
+            }
+
+            var runtime = new RuntimeSlotManager(Path.Combine(root, "runtime")).ResolveActive(verifyFiles: true);
+            if (!runtime.IsReady)
+            {
+                return new PortableReleaseArchiveResult(
+                    PortableReleaseArchiveStatus.RuntimeNotReady,
+                    Error: runtime.Error ?? runtime.Status.ToString());
+            }
+
+            return TryCollectFiles(root, out var files, out var error)
+                ? new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.Validated, FileCount: files.Count)
+                : new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.UnsafePath, Error: error);
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or InvalidDataException)
         {

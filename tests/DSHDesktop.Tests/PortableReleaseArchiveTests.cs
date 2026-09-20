@@ -7,6 +7,20 @@ namespace DSHDesktop.Tests;
 public class PortableReleaseArchiveTests
 {
     [Fact]
+    public void Validate_AcceptsVerifiedPortableReleaseWithoutWritingAnArchive()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var publish = CreateVerifiedPublishRoot(temp.Path);
+
+        var result = PortableReleaseArchive.Validate(publish);
+
+        Assert.True(result.Success);
+        Assert.Equal(PortableReleaseArchiveStatus.Validated, result.Status);
+        Assert.Equal(8, result.FileCount);
+        Assert.Empty(Directory.EnumerateFiles(temp.Path, "*.zip", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public void Create_ArchivesVerifiedPortableReleaseDeterministically()
     {
         using var temp = new RuntimeSlotManagerTests.TempDirectory();

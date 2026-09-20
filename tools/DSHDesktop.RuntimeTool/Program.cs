@@ -20,6 +20,7 @@ internal static class Program
                 "activate" => Activate(options),
                 "checksums" => Checksums(options),
                 "portable" => Portable(options),
+                "verify-portable" => VerifyPortable(options),
                 "validate-input-lock" => ValidateInputLock(options),
                 "sbom" => Sbom(options),
                 "sign-release" => SignRelease(options),
@@ -142,6 +143,15 @@ internal static class Program
         return 0;
     }
 
+    private static int VerifyPortable(IReadOnlyDictionary<string, string> options)
+    {
+        var result = PortableReleaseArchive.Validate(Required(options, "root"));
+        if (!result.Success)
+            throw new InvalidDataException("Portable publish root is invalid: " + (result.Error ?? result.Status.ToString()));
+        Console.WriteLine($"runtime-manifest: portable publish root verified ({result.FileCount} files)");
+        return 0;
+    }
+
     private static int ValidateInputLock(IReadOnlyDictionary<string, string> options)
     {
         var lockFile = ReleaseInputLock.Parse(File.ReadAllText(Required(options, "input")));
@@ -227,7 +237,7 @@ internal static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|portable|validate-input-lock|sbom|sign-release --name value ...");
+        Console.Error.WriteLine("usage: runtime-tool generate|verify|activate|checksums|portable|verify-portable|validate-input-lock|sbom|sign-release --name value ...");
         return 2;
     }
 }

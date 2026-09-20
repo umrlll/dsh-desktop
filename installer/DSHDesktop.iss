@@ -6,6 +6,10 @@
   #define MyAppVersion "0.0.0-dev"
 #endif
 
+#ifndef OutputDir
+  #define OutputDir "Output"
+#endif
+
 #if FileExists(AddBackslash(SourceDir) + "DSHDesktop.exe")
 #else
   #error SourceDir is missing DSHDesktop.exe.
@@ -42,6 +46,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\DSHDesktop.exe
 OutputBaseFilename=DSHDesktop-Setup-{#MyAppVersion}
+OutputDir={#OutputDir}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
