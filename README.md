@@ -71,6 +71,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-installer.ps
 
 该命令不是正式发布授权：输入仍须先通过兼容矩阵、输入锁、签名与干净机器安装/升级/卸载验收。
 
+对两个已完成的 Portable 输入，可运行下列生命周期验收。脚本不启动桌面程序；它在临时目录中生成两套安装器，静默安装旧版、覆盖升级至新版，以 `DSHDesktop.exe` 的 SHA-256 确认替换，随后静默卸载并确认临时安装根已删除、外部用户数据哨兵仍在：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-installer-lifecycle.ps1 `
+  -OlderSourceDir C:\release\DSHDesktop-1.0.0 `
+  -OlderVersion 1.0.0 `
+  -NewerSourceDir C:\release\DSHDesktop-1.0.1 `
+  -NewerVersion 1.0.1
+```
+
+两个输入的壳二进制必须不同；该限制防止“升级实际没有替换文件”被误报为通过。真实运行时/后端/WebView 冒烟仍需在完整发布输入到位后接入该验收。
+
 未传 `SkipBundleRuntime=true` 时，缺少任一来源或精确版本会在 `Publish` 前直接失败。完整发布每次
 从零建立 `obj\bundle-runtime\<Configuration>`，生成并自校验 manifest，再发布到
 `runtime\versions\<runtime-id>` 并原子写入 `runtime\active.json`；
@@ -224,7 +236,7 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 | CI 验证基线 | 已有 | Windows 构建、321 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
 | M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；已验签下载、安全原子解包、manifest 身份复验和候选槽接纳已形成单一更新入口；发布源配置模板/校验器已就绪，待提供真实信任根、端点和 UI 接线 | 独立 profile、更新、健康失败回退均可验证 |
 | M5-A Portable | 进行中 | 已实现仅接纳完整、已验证 runtime 槽的确定性 Portable ZIP 工具及 HTTPS/SHA-256 输入锁；待 CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入并上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
-| M5-B 安装器 | 进行中 | 已新增 Inno Setup 按用户安装器定义与唯一打包入口；入口会验证完整 runtime manifest、拒绝 shell-only/损坏输入及源目录内输出，并默认保留用户数据；待完整 Portable 输入、静默安装/升级/卸载验证与可信签名 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
+| M5-B 安装器 | 进行中 | 已新增 Inno Setup 按用户安装器定义、唯一打包入口及安装/升级/卸载生命周期脚本；入口会验证完整 runtime manifest、拒绝 shell-only/损坏输入及源目录内输出；生命周期脚本实际验证文件替换与外部用户数据保留。待真实完整 Portable 输入、运行态冒烟与可信签名 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
 | M5-C 正式发布 | 进行中 | CI 已生成 SPDX SBOM 与 `SHA256SUMS.txt`；待可信 Authenticode、RFC3161、完整运行时资产、NOTICE 审计与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
 
 发布门的简化顺序为：

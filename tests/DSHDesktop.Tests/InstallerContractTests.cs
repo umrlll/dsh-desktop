@@ -23,5 +23,12 @@ public class InstallerContractTests
         Assert.Contains("/DSourceDir=", packager);
         Assert.Contains("/DMyAppVersion=", packager);
         Assert.Contains("OutputDir must be outside SourceDir", packager);
+
+        var lifecycle = File.ReadAllText(Path.Combine(SourceScanner.RepoRoot, "scripts", "test-installer-lifecycle.ps1"));
+        Assert.Contains("/VERYSILENT", lifecycle);
+        Assert.Contains("Silent upgrade", lifecycle);
+        Assert.Contains("unins*.exe", lifecycle);
+        Assert.Contains("retain-after-uninstall.txt", lifecycle);
+        Assert.Contains("Get-FileHash", lifecycle);
     }
 }
