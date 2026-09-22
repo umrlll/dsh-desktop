@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -24,6 +25,10 @@ public partial class MainWindow : Window
     private static readonly IProfileManager Profiles = ProfileManager.Default;
     private readonly IServerHost _serverHost = new ServerHost();
     private readonly IUpdateCoordinator _updates = new UpdateCoordinator();
+    private readonly ReleaseSkipStore _releaseSkips = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DSHDesktop",
+        "state"));
     private readonly IRecoveryCoordinator _recovery = new RecoveryCoordinator(maximumAutomaticRestarts: 3);
     private readonly TrayController _trayController;
     private int _port;
@@ -33,10 +38,12 @@ public partial class MainWindow : Window
     private ulong? _policyCancelledNavigationId;
     private bool _healthyNavigationCommitted;
     private System.Threading.CancellationTokenSource? _frontendHealthCts;
+    private System.Threading.CancellationTokenSource? _releaseUpdateCts;
+    private string? _pendingUpdateRuntimeId;
     /// <summary>
     /// 当前进行中的标题栏动作（null = 空闲）："check" / "update" / "restart" / "recover"。
     /// 更新自身的并发状态由 <see cref="_updates"/> 管理；此字段额外协调重启/恢复等 UI 动作，
-    /// 避免「更新写入 node_modules 的同时用户点重启」这类叠加态（R16）。
+    /// 避免「更新切换运行时槽的同时用户点重启」这类叠加态（R16）。
     /// </summary>
     private string? _busyMode;
 
@@ -519,7 +526,7 @@ public partial class MainWindow : Window
     /// 关闭按钮：**收起窗口到托盘**，不再直接退出。
     /// 退出入口只剩托盘菜单「退出」——它调用 <c>Window.Close()</c>，因此仍会经过
     /// <c>Window_Closing</c> 的「更新进行中」确认门；同时也消除了「更新进行中点✕」把
-    /// npm 变成无人回收的孤儿进程这条路径（隐藏窗口不会结束进程）。
+    /// 下载或解包任务在窗口关闭后失去宿主的路径（隐藏窗口不会结束任务）。
     /// </summary>
     private void OnClose(object sender, RoutedEventArgs e) => _trayController.Hide();
 
@@ -829,6 +836,112 @@ public partial class MainWindow : Window
             DesktopLog.Error("重启 dsh 服务失败", ex);
             SetStatus("重启 dsh 服务失败: " + ex.Message);
             SetTitlebarError("重启失败：" + ex.Message);
+        }
+        finally
+        {
+            EndBusy();
+            FocusWindowAndWeb();
+        }
+    }
+
+    /// <summary>
+    /// Shows the active and rollback runtime slots, then performs a health-gated rollback only
+    /// after explicit confirmation. A failed manual rollback immediately restores the original
+    /// slot instead of leaving the user on an unverified runtime.
+    /// </summary>
+    private async void OnMenuManageRuntime(object sender, RoutedEventArgs e)
+    {
+        CloseAllTitlebarPopups();
+        BeginBusy("restart");
+        try
+        {
+            var slots = new RuntimeSlotManager(Runtime.WritableRuntimeRoot);
+            var active = slots.ResolveActive(verifyFiles: true);
+            var currentId = active.Selection?.ActiveRuntimeId;
+            var previousId = active.Selection?.PreviousRuntimeId;
+            if (!active.IsReady || string.IsNullOrWhiteSpace(currentId) || string.IsNullOrWhiteSpace(previousId))
+            {
+                AppDialog.Show(
+                    this,
+                    "运行时信息",
+                    "当前没有可回退的已验证运行时槽。\n\n当前状态：" + active.Status
+                        + (string.IsNullOrWhiteSpace(active.Error) ? string.Empty : "\n原因：" + active.Error),
+                    primary: "知道了",
+                    warning: true);
+                return;
+            }
+
+            var previous = slots.Resolve(previousId, verifyFiles: true);
+            if (!previous.IsReady)
+            {
+                AppDialog.Show(
+                    this,
+                    "运行时信息",
+                    "上一运行时槽未通过完整性校验，不能回退。\n\n槽：" + previousId
+                        + "\n原因：" + (previous.Error ?? previous.Status.ToString()),
+                    primary: "知道了",
+                    warning: true);
+                return;
+            }
+
+            var currentVersion = active.Manifest?.DshVersion ?? "未知";
+            var previousVersion = previous.Manifest?.DshVersion ?? "未知";
+            var answer = AppDialog.Show(
+                this,
+                "运行时信息与回退",
+                "当前槽：" + currentId + "（dsh v" + currentVersion + "）\n"
+                    + "可回退槽：" + previousId + "（dsh v" + previousVersion + "）\n\n"
+                    + "回退会停止并重启 DSH 服务。若目标槽未通过前端健康验证，将自动恢复当前槽。",
+                primary: "回退并重启",
+                cancel: "取消",
+                warning: true);
+            if (answer != AppDialogResult.Primary) return;
+
+            SetStatus("正在回退到上一已验证运行时槽…");
+            StopServer();
+            var rollback = slots.Rollback();
+            if (!rollback.Success)
+            {
+                var error = "无法回退运行时槽：" + rollback.Error;
+                SetStatus(error);
+                AppDialog.Show(this, "运行时回退", error, primary: "知道了", warning: true);
+                await StartAndEmbedAsync();
+                return;
+            }
+
+            Runtime.Invalidate();
+            ShowCurrentVersion();
+            await StartAndEmbedAsync();
+            if (await WaitForFrontendHealthAsync(TimeSpan.FromSeconds(50)))
+            {
+                SetStatus("已回退到 dsh v" + previousVersion + "，运行时槽通过前端健康验证。");
+                return;
+            }
+
+            StopServer();
+            var restore = slots.Rollback();
+            Runtime.Invalidate();
+            var restoredHealthy = false;
+            if (restore.Success)
+            {
+                ShowCurrentVersion();
+                await StartAndEmbedAsync();
+                restoredHealthy = await WaitForFrontendHealthAsync(TimeSpan.FromSeconds(50));
+            }
+            var failure = restore.Success
+                ? restoredHealthy
+                    ? "回退目标未通过前端健康验证，已恢复原运行时槽。"
+                    : "回退目标未通过前端健康验证，且恢复原运行时槽后健康验证仍失败。"
+                : "回退目标未通过前端健康验证，恢复原运行时槽失败：" + restore.Error;
+            DesktopLog.Error("手动运行时回退失败：" + failure);
+            SetStatus(failure);
+            AppDialog.Show(this, "运行时回退", failure, primary: "知道了", warning: true);
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("运行时管理失败", ex);
+            SetStatus("运行时管理失败：" + ex.Message);
+            AppDialog.Show(this, "运行时信息", "无法读取或切换运行时槽：" + ex.Message, primary: "知道了", warning: true);
         }
         finally
         {
@@ -1320,11 +1433,29 @@ public partial class MainWindow : Window
             var answer = AppDialog.Show(this, "导出诊断",
                 "诊断包包含最近的日志与一份系统信息摘要。\n\n"
                 + "日志可能含有本机路径、工作区与会话标识；请自行确认后再分享。",
-                primary: "继续导出", cancel: "取消");
-            if (answer != AppDialogResult.Primary) return;
+                primary: "选择目录",
+                secondary: "导出到日志目录",
+                cancel: "取消");
+            if (answer == AppDialogResult.Cancel) return;
 
             var dir = DesktopLog.Directory ?? DesktopLog.DefaultDirectory();
             System.IO.Directory.CreateDirectory(dir);
+            if (answer == AppDialogResult.Primary)
+            {
+                using var picker = new System.Windows.Forms.FolderBrowserDialog
+                {
+                    Description = "选择诊断包保存目录",
+                    InitialDirectory = dir,
+                    ShowNewFolderButton = true,
+                };
+                if (picker.ShowDialog() != System.Windows.Forms.DialogResult.OK
+                    || string.IsNullOrWhiteSpace(picker.SelectedPath))
+                {
+                    SetStatus("已取消选择诊断包保存目录。");
+                    return;
+                }
+                dir = picker.SelectedPath;
+            }
             var target = Path.Combine(dir, "dsh-desktop-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip");
             SetStatus("正在导出诊断包…");
             var result = await Task.Run(() => DesktopLog.ExportDiagnostics(target));
@@ -1350,13 +1481,14 @@ public partial class MainWindow : Window
         {
             var profileDir = Profiles.Active.Directory;
             var profile = Profiles.Active.Name;
-            var suspects = DesktopRecovery.FindSuspectBundles(profileDir, profile);
+            var suspectAnalysis = DesktopRecovery.AnalyzeSuspectBundles(profileDir, profile, _recentStderr);
+            var suspects = suspectAnalysis.Select(candidate => candidate.Bundle).ToList();
             var lastGood = DesktopRecovery.LastGoodSummary(profile);
             var canReEnable = DesktopRecovery.HasDisabledRecord(profileDir);
 
             var text = detail
-                + (suspects.Count > 0
-                    ? "\n\n可疑插件: " + string.Join(", ", suspects)
+                + (suspectAnalysis.Count > 0
+                    ? "\n\n可疑插件及证据：\n" + DesktopRecovery.DescribeSuspects(suspectAnalysis)
                     : "\n\n没有发现「快照之后新装入」的插件。")
                 + (lastGood != null ? "\n已提交的可用状态: " + lastGood : "\n还没有可回滚的可用快照。");
 
@@ -1375,18 +1507,35 @@ public partial class MainWindow : Window
                     break;
 
                 case RecoveryAction.DisableLastPlugin:
+                    if (!ConfirmRecoveryMutation(
+                        "禁用可疑插件？",
+                        "这会从当前 profile 的 bundles 中移除：\n"
+                        + string.Join(", ", suspects)
+                        + "\n\n程序会先备份 package.json；之后将重启服务。",
+                        "禁用并重启"))
+                        return;
                     DesktopRecovery.DisableBundles(profileDir, profile, suspects, out var disabled);
                     SetStatus(disabled);
                     await RetryAfterRecoveryAsync();
                     break;
 
                 case RecoveryAction.ReEnable:
+                    if (!ConfirmRecoveryMutation(
+                        "恢复被禁用的插件？",
+                        "这会把上次由 DSH Desktop 禁用的插件重新写入当前 profile 的 bundles，并重启服务。",
+                        "恢复并重启"))
+                        return;
                     DesktopRecovery.ReEnableBundles(profileDir, out var enabled);
                     SetStatus(enabled);
                     await RetryAfterRecoveryAsync();
                     break;
 
                 case RecoveryAction.Rollback:
+                    if (!ConfirmRecoveryMutation(
+                        "回滚到可用状态？",
+                        "这会用最近一次已验证的启动快照覆盖当前 profile 清单。当前文件会先保存为备份；之后将重启服务。",
+                        "回滚并重启"))
+                        return;
                     DesktopRecovery.Rollback(profileDir, profile, out var rolled);
                     SetStatus(rolled);
                     await RetryAfterRecoveryAsync();
@@ -1402,6 +1551,10 @@ public partial class MainWindow : Window
             DesktopLog.Error("恢复助手异常", ex);
         }
     }
+
+    private bool ConfirmRecoveryMutation(string title, string detail, string primary)
+        => AppDialog.Show(this, title, detail, primary, cancel: "取消", warning: true)
+           == AppDialogResult.Primary;
 
     private async Task RetryAfterRecoveryAsync()
     {
@@ -1824,7 +1977,24 @@ public partial class MainWindow : Window
             BeginBusy("check");               // 单一 busy 门：禁用全部标题栏动作并派生文案
             ResetVersionPopupError();
             var current = ReadBundledVersion();
-            var res = await VersionUpdate.CheckAsync(current);
+            VersionUpdate.Result? res;
+            if (TryGetSignedReleaseSource(out var signedSource, out _) && signedSource != null)
+            {
+                var metadata = await FetchSignedReleaseDescriptorAsync(signedSource);
+                var descriptor = metadata.Descriptor;
+                res = metadata.Success && descriptor != null && IsSignedCandidateCompatible(descriptor)
+                    ? new VersionUpdate.Result(
+                        current,
+                        descriptor.DshVersion,
+                        descriptor.DshVersion,
+                        VersionUpdate.IsNewer(descriptor.DshVersion, current),
+                        string.Equals(descriptor.Channel, "stable", StringComparison.Ordinal))
+                    : null;
+            }
+            else
+            {
+                res = await VersionUpdate.CheckAsync(current);
+            }
             if (res == null)
             {
                 _updates.FailCheck("网络不可用或 registry 响应无法解析");
@@ -1838,13 +2008,14 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var candidate = res.Available
+            var skipped = res.Available && _releaseSkips.IsSkipped(res.Newest);
+            var candidate = res.Available && !skipped
                 ? new UpdateCandidate(res.Current, res.Latest, res.Newest, res.StableUpdate)
                 : null;
             _updates.CompleteCheck(candidate);
             ApplyUpdateState();
 
-            if (res.Available)
+            if (res.Available && !skipped)
             {
                 var channel = res.StableUpdate ? "稳定版" : "预发布版";
                 if (manual)
@@ -1855,7 +2026,9 @@ public partial class MainWindow : Window
             }
             else if (manual)
             {
-                SetStatus("DeepSeek Harness 已是最新版本（v" + res.Current + "）。");
+                SetStatus(skipped
+                    ? "已跳过 v" + res.Newest + "，发现更高版本时会再次提示。"
+                    : "DeepSeek Harness 已是最新版本（v" + res.Current + "）。");
             }
         }
         catch (Exception ex)
@@ -1887,6 +2060,36 @@ public partial class MainWindow : Window
         FocusWindowAndWeb();
     }
 
+    private void OnSkipUpdate(object sender, RoutedEventArgs e)
+    {
+        CloseAllTitlebarPopups();
+        var candidate = _updates.Snapshot.Candidate;
+        if (candidate == null || _updates.Snapshot.IsBusy)
+        {
+            SetStatus("当前没有可跳过的更新。");
+            return;
+        }
+
+        try
+        {
+            _releaseSkips.Skip(candidate.Newest);
+            if (_updates.TryDismissCandidate(out var dismissed) && dismissed != null)
+            {
+                ApplyUpdateState();
+                SetStatus("已跳过 v" + dismissed.Newest + "，发现更高版本时会再次提示。");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SetStatus("无法保存跳过版本设置：" + ex.Message);
+            AppDialog.Show(this, "DSH 更新", "无法保存跳过版本设置，更新仍会继续提示。", primary: "知道了", warning: true);
+        }
+        finally
+        {
+            FocusWindowAndWeb();
+        }
+    }
+
     /// <summary>从版本浮层跳转到更新详情浮层。</summary>
     private void OnShowUpdateDetails(object sender, RoutedEventArgs e) => ShowUpdatePopup();
 
@@ -1906,7 +2109,14 @@ public partial class MainWindow : Window
         // 版本号进胶囊、通道进圆点+副标题：标题固定为「发现新版本」，信息层级更清楚。
         PopupVersionChip.Text = "v" + res.Newest;
         PopupChannelDot.Fill = (Brush)FindResource(res.StableUpdate ? "UpdateChannelStableBrush" : "UpdateChannelPreBrush");
-        PopupSubtitle.Text = $"当前 dsh v{res.Current} · {channel} · 点击“立即更新”升级内置 Harness 并热重载";
+        PopupSubtitle.Text = $"当前 dsh v{res.Current} · {channel} · 先下载并验证，再确认安装";
+        // The signed release feed is deliberately deployment-owned. A registry result alone
+        // must never enable the legacy npm staging path.
+        var signedSourceReady = TryGetSignedReleaseSource(out _, out _);
+        BtnPopupUpdate.IsEnabled = signedSourceReady;
+        BtnPopupUpdate.ToolTip = signedSourceReady
+            ? "下载并验证已签名的运行时发布包"
+            : "尚未配置受信任的签名更新通道";
         UpdatePopup.IsOpen = true;
         SetTitleBarTag(BtnVersion, true);   // UpdatePopup 锚定 BtnVersion，锚点态同步为展开
         _ = LoadReleaseNotesAsync(res.Newest);
@@ -2272,86 +2482,20 @@ public partial class MainWindow : Window
         await StartAndEmbedAsync();
     }
 
-    /// <summary>
-    /// 在用户可写运行时根中构建候选槽。npm 只接触 staging 副本；当前活动槽不会被原地修改。
-    /// </summary>
-    private static async Task<RuntimeUpdateStageResult> RunUpdateAsync(string targetVersion)
-    {
-        var current = Runtime.Resolve();
-        if (!current.IsVerified
-            || current.RuntimeRoot == null
-            || current.RuntimeManifestPath == null)
-        {
-            return new RuntimeUpdateStageResult(
-                RuntimeUpdateStageStatus.SourceInvalid,
-                Error: "当前运行时不是已验证的版本槽，已拒绝原地更新。请安装完整发行包后重试。");
-        }
-
-        var npm = Runtime.FindNpm();
-        if (npm == null)
-            return new RuntimeUpdateStageResult(
-                RuntimeUpdateStageStatus.InstallFailed,
-                Error: "未找到 npm（当前发行载荷只带 Node；更新 staging 仍需可用 npm）。");
-
-        async Task<RuntimeUpdateInstallResult> Install(
-            RuntimeUpdateInstallContext context,
-            System.Threading.CancellationToken cancellationToken)
-        {
-            var psi = new ProcessStartInfo(npm.NodePath)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                WorkingDirectory = context.DshInstallDirectory,
-            };
-            psi.ArgumentList.Add(npm.NpmCliPath);
-            psi.ArgumentList.Add("install");
-            psi.ArgumentList.Add("@deepseek-ai/dsh@" + context.TargetDshVersion);
-            psi.ArgumentList.Add("--save-exact");
-            psi.ArgumentList.Add("--no-audit");
-            psi.ArgumentList.Add("--no-fund");
-            psi.ArgumentList.Add("--no-update-notifier");
-
-            try
-            {
-                using var proc = Process.Start(psi);
-                if (proc == null) return RuntimeUpdateInstallResult.Fail("无法启动 npm 进程。");
-                var outTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
-                var errTask = proc.StandardError.ReadToEndAsync(cancellationToken);
-                using var timeout = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(TimeSpan.FromMinutes(5));
-                try
-                {
-                    await proc.WaitForExitAsync(timeout.Token);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                    return RuntimeUpdateInstallResult.Fail("更新超时（超过 5 分钟）。");
-                }
-
-                var output = (await outTask + "\n" + await errTask).Trim();
-                return proc.ExitCode == 0
-                    ? RuntimeUpdateInstallResult.Ok()
-                    : RuntimeUpdateInstallResult.Fail(output);
-            }
-            catch (Exception ex)
-            {
-                return RuntimeUpdateInstallResult.Fail(ex.Message);
-            }
-        }
-
-        return await new RuntimeUpdateStager(Runtime.WritableRuntimeRoot).StageAndActivateAsync(
-            current.RuntimeRoot,
-            current.RuntimeManifestPath,
-            targetVersion,
-            Install);
-    }
-
     /// <summary>点击"立即更新"：运行更新指令，成功后透明热重载内嵌 dsh。</summary>
     private async Task ApplyUpdateAsync()
     {
+        const string signedReleaseRequired =
+            "在线更新尚不可用：此安装尚未配置受信任的签名发布通道。请等待正式发行包或联系发布者。";
+        if (!TryGetSignedReleaseSource(out var signedSource, out var configurationError)
+            || signedSource == null)
+        {
+            var message = signedReleaseRequired + "（" + (configurationError ?? "configuration-missing") + "）";
+            SetStatus(message);
+            AppDialog.Show(this, "DSH 更新", message, primary: "知道了", warning: true);
+            return;
+        }
+
         // 入口并发门：busy 期间不得二次进入更新。仅靠按钮禁用不足以防住
         // 「更新中再点铃铛重开浮层、再点『立即更新』」这条路径——浮层里的
         // BtnPopupUpdate 不参与标题栏的 IsEnabled 门控。
@@ -2368,6 +2512,7 @@ public partial class MainWindow : Window
         }
         var target = candidate.Newest;
 
+        System.Threading.CancellationTokenSource? releaseUpdateCts = null;
         try
         {
             BeginBusy("update");             // 单一 busy 门：禁用全部标题栏动作并派生文案
@@ -2375,12 +2520,15 @@ public partial class MainWindow : Window
             var beforeModels = await ReadModelNamesAsync();   // 更新前快照（尽力而为）
             StopServer();
 
-            SetStatus("正在新运行时槽中安装并校验 DSH v" + target + "…");
-            var result = await RunUpdateAsync(target);
+            SetStatus("正在下载并验证已签名的运行时发布包…");
+            releaseUpdateCts = new System.Threading.CancellationTokenSource();
+            _releaseUpdateCts = releaseUpdateCts;
+            var result = await RunSignedReleaseUpdateAsync(signedSource, releaseUpdateCts.Token);
             if (result.Success)
             {
-                if (!string.IsNullOrWhiteSpace(result.MaintenanceWarning))
-                    DesktopLog.Warn(result.MaintenanceWarning);
+                if (!string.IsNullOrWhiteSpace(result.Adoption?.MaintenanceWarning))
+                    DesktopLog.Warn(result.Adoption.MaintenanceWarning);
+                _pendingUpdateRuntimeId = result.Adoption?.RuntimeId;
                 Runtime.Invalidate();
                 ShowCurrentVersion();
                 SetStatus("候选槽已激活，正在执行前端健康验证…");
@@ -2392,8 +2540,8 @@ public partial class MainWindow : Window
                     var slots = new RuntimeSlotManager(Runtime.WritableRuntimeRoot);
                     var rollback = slots.Rollback();
                     RuntimeSlotQuarantineResult? quarantine = null;
-                    if (rollback.Success && result.RuntimeId != null)
-                        quarantine = slots.QuarantineInactive(result.RuntimeId);
+                    if (rollback.Success && result.Adoption?.RuntimeId != null)
+                        quarantine = slots.QuarantineInactive(result.Adoption.RuntimeId);
                     Runtime.Invalidate();
                     var rollbackHealthy = false;
                     if (rollback.Success)
@@ -2412,6 +2560,7 @@ public partial class MainWindow : Window
                     else if (quarantine is { Success: false })
                         rollbackDetail += " 隔离失败候选时出错：" + quarantine.Error;
                     var error = "新运行时槽未通过前端健康验证。" + rollbackDetail;
+                    _pendingUpdateRuntimeId = null;
                     _updates.FailApply(error);
                     ApplyUpdateState();
                     DesktopLog.Error("更新健康门失败: " + error);
@@ -2420,10 +2569,23 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                _updates.CompleteApply(target);
+                var installedVersion = result.Acquisition?.Descriptor?.DshVersion ?? target;
+                _pendingUpdateRuntimeId = null;
+                _updates.CompleteApply(installedVersion);
                 ApplyUpdateState();
-                SetStatus("已更新到 v" + target + "，新运行时槽已通过健康验证。");
+                SetStatus("已更新到 v" + installedVersion + "，新运行时槽已通过健康验证。");
                 await NotifyNewModelsAsync(beforeModels);   // 更新后自动查找新增模型
+            }
+            else if (result.Status == RuntimeReleaseUpdateStatus.Cancelled)
+            {
+                Runtime.Invalidate();
+                var message = result.Error ?? (result.Acquisition?.Success == true
+                    ? "已下载并验证候选运行时；你选择暂不安装，当前活动槽保持不变。"
+                    : "更新已取消，当前活动槽保持不变。");
+                _updates.FailApply(message);
+                ApplyUpdateState();
+                SetStatus(message);
+                await StartAndEmbedAsync();
             }
             else
             {
@@ -2440,9 +2602,131 @@ public partial class MainWindow : Window
         }
         finally
         {
+            if (ReferenceEquals(_releaseUpdateCts, releaseUpdateCts))
+                _releaseUpdateCts = null;
+            releaseUpdateCts?.Dispose();
             if (_updates.Snapshot.Phase == UpdatePhase.Applying)
                 _updates.FailApply("更新流程未完成");
             EndBusy();                   // 更新成功→「检查更新」；失败→保留「有更新」以便重试
+        }
+    }
+
+    private static bool TryGetSignedReleaseSource(
+        out RuntimeReleaseSource? source,
+        out string? error)
+    {
+        source = null;
+        if (!RuntimeReleaseFeedConfiguration.TryLoadConfigurationFile(
+                Environment.GetEnvironmentVariable("DSH_DESKTOP_RELEASE_FEED_CONFIG"),
+                out var configuration,
+                out error)
+            || configuration == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            source = configuration.ToSource(Environment.GetEnvironmentVariable("DSH_DESKTOP_RELEASE_CHANNEL"));
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            error = "configuration-channel";
+            return false;
+        }
+    }
+
+    private async Task<RuntimeReleaseUpdateResult> RunSignedReleaseUpdateAsync(
+        RuntimeReleaseSource source,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        var current = Runtime.Resolve();
+        if (!current.IsVerified || string.IsNullOrWhiteSpace(current.RuntimeManifestPath))
+        {
+            return new RuntimeReleaseUpdateResult(
+                RuntimeReleaseUpdateStatus.InvalidRequest,
+                Error: "当前运行时不具备受验证的宿主身份，拒绝接纳在线候选。");
+        }
+        RuntimeManifest currentManifest;
+        try
+        {
+            currentManifest = RuntimeManifest.Load(current.RuntimeManifestPath);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return new RuntimeReleaseUpdateResult(
+                RuntimeReleaseUpdateStatus.InvalidRequest,
+                Error: "无法读取当前受验证运行时身份：" + ex.Message);
+        }
+
+        using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        using var timeout = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(15));
+        var acquirer = new RuntimeReleaseAcquirer(
+            new RuntimeReleaseFeedClient(http),
+            new RuntimePayloadExtractor());
+        var updater = new RuntimeReleaseUpdater(Runtime.WritableRuntimeRoot, acquirer);
+        var acquisition = await updater.AcquireAsync(
+            source,
+            timeout.Token,
+            descriptor =>
+            {
+                var compatibility = RuntimeReleaseCompatibility.Evaluate(currentManifest, descriptor);
+                return compatibility.IsCompatible
+                    ? null
+                    : "签名候选与当前宿主不兼容：" + string.Join(",", compatibility.Mismatches);
+            });
+        if (!acquisition.Success)
+            return updater.ActivateAcquiredCandidate(acquisition);
+
+        var descriptor = acquisition.Descriptor!;
+        SetStatus("候选运行时已下载并验证，等待安装确认…");
+        var answer = AppDialog.Show(
+            this,
+            "安装 DSH 更新",
+            "已下载并验证签名候选运行时 v" + descriptor.DshVersion
+                + "。安装将切换运行时槽并重载 DSH 服务；失败时会自动回退。",
+            primary: "安装更新",
+            cancel: "暂不安装");
+        if (answer != AppDialogResult.Primary)
+        {
+            var discarded = updater.DiscardAcquiredCandidate(acquisition);
+            return new RuntimeReleaseUpdateResult(
+                RuntimeReleaseUpdateStatus.Cancelled,
+                acquisition,
+                Error: discarded
+                    ? "已丢弃已下载的候选运行时，当前活动槽保持不变。"
+                    : "用户暂不安装已下载的候选运行时；候选保留在 staging 中等待安全清理。");
+        }
+
+        SetStatus("正在安装已验证的候选运行时…");
+        return updater.ActivateAcquiredCandidate(acquisition);
+    }
+
+    private static async Task<RuntimeReleaseMetadataResult> FetchSignedReleaseDescriptorAsync(
+        RuntimeReleaseSource source)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        return await new RuntimeReleaseFeedClient(http).FetchVerifiedDescriptorAsync(
+            source.MetadataUri,
+            source.TrustedPublicKeys,
+            source.Channel);
+    }
+
+    private static bool IsSignedCandidateCompatible(RuntimeReleaseDescriptor descriptor)
+    {
+        var current = Runtime.Resolve();
+        if (!current.IsVerified || string.IsNullOrWhiteSpace(current.RuntimeManifestPath)) return false;
+        try
+        {
+            return RuntimeReleaseCompatibility.Evaluate(
+                RuntimeManifest.Load(current.RuntimeManifestPath),
+                descriptor).IsCompatible;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 
@@ -2515,16 +2799,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 更新进行中关闭窗口的显式裁决。npm 只写 staging，但进程句柄属于更新任务；关窗不会可靠
-    /// 中止该子进程，且退出后 manifest 校验、槽切换和 staging 清理都不会继续执行。
+    /// 更新进行中关闭窗口的显式裁决。签名发布只写 staging，但下载/解包任务仍属于
+    /// 当前窗口；确认关闭时取消该任务，活动槽不会被原地修改。
     /// </summary>
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (_busyMode != "update") return;
 
         var choice = AppDialog.Show(this, "DSH Desktop",
-            "更新正在 staging 中进行。现在关闭不会可靠中止安装子进程，"
-            + "且 manifest 校验、槽切换和 staging 清理都不会再执行；当前活动槽不会被修改。\n\n"
+            "更新正在 staging 中进行。确认关闭会取消下载或解包任务，"
+            + "且后续校验、槽切换和 staging 清理不会继续执行；当前活动槽不会被修改。\n\n"
             + "建议等更新结束后再关闭。",
             primary: "仍要关闭", cancel: "继续等待", warning: true);
         if (choice != AppDialogResult.Primary)
@@ -2533,7 +2817,35 @@ public partial class MainWindow : Window
             SetStatus("更新进行中，已取消关闭。更新完成后可再次关闭窗口。");
             return;
         }
+        _releaseUpdateCts?.Cancel();
+        RollBackPendingUpdateForExit();
         DesktopLog.Warn("更新进行中用户确认关闭：活动槽保持不变，但可能留下未完成 staging，稍后需清理或重试。");
+    }
+
+    private void RollBackPendingUpdateForExit()
+    {
+        var runtimeId = _pendingUpdateRuntimeId;
+        if (string.IsNullOrWhiteSpace(runtimeId)) return;
+        _pendingUpdateRuntimeId = null;
+        try
+        {
+            StopServer();
+            var slots = new RuntimeSlotManager(Runtime.WritableRuntimeRoot);
+            var rollback = slots.Rollback();
+            var quarantine = rollback.Success
+                ? slots.QuarantineInactive(runtimeId)
+                : null;
+            Runtime.Invalidate();
+            DesktopLog.Warn(rollback.Success
+                ? "关闭前已回退未经健康验证的候选运行时槽。"
+                : "关闭前无法回退未经健康验证的候选运行时槽：" + rollback.Error);
+            if (quarantine is { Success: false })
+                DesktopLog.Warn("关闭前隔离候选运行时槽失败：" + quarantine.Error);
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn("关闭前回退候选运行时槽失败：" + DesktopLog.Describe(ex));
+        }
     }
 
     private void Window_Closed(object? sender, EventArgs e)

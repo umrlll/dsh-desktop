@@ -12,7 +12,13 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$OutputDir,
 
-    [string]$IsccPath
+    [string]$IsccPath,
+
+    [ValidatePattern('^[0-9A-Za-z{}-]+$')]
+    [string]$AppId,
+
+    [ValidatePattern('^[0-9A-Za-z._-]+(?:\\[0-9A-Za-z._-]+)*$')]
+    [string]$RegistryKey
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,7 +48,8 @@ if (
 
 # This gate verifies active.json, its selected immutable slot, and every declared runtime file.
 # A shell-only publish must fail before ISCC has an opportunity to produce an installer.
-& dotnet run --project $runtimeTool -c Release --no-restore -- verify-portable --root $resolvedSource
+& dotnet run --project $runtimeTool -c Release --no-restore -- verify-portable `
+    --root $resolvedSource --expected-desktop-version $Version
 if ($LASTEXITCODE -ne 0) {
     throw "Portable publish root validation failed (exit code $LASTEXITCODE)."
 }
@@ -59,7 +66,10 @@ if ([string]::IsNullOrWhiteSpace($IsccPath) -or -not (Test-Path -LiteralPath $Is
 }
 
 New-Item -ItemType Directory -Path $resolvedOutput -Force | Out-Null
-& $IsccPath "/DSourceDir=$resolvedSource" "/DMyAppVersion=$Version" "/DOutputDir=$resolvedOutput" $definition
+$isccArguments = @("/DSourceDir=$resolvedSource", "/DMyAppVersion=$Version", "/DOutputDir=$resolvedOutput")
+if (-not [string]::IsNullOrWhiteSpace($AppId)) { $isccArguments += "/DMyAppId=$AppId" }
+if (-not [string]::IsNullOrWhiteSpace($RegistryKey)) { $isccArguments += "/DDshDesktopRegistryKey=$RegistryKey" }
+& $IsccPath @isccArguments $definition
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC failed (exit code $LASTEXITCODE)."
 }

@@ -240,12 +240,28 @@ internal static class DesktopRecovery
     }
 
     /// <summary>
-    /// 找出"快照之后新加进 bundles 的项"，即最可能是罪魁的那个插件。
-    /// 没有快照时退化为"bundles 里的最后一项"。
+    /// Correlates the current loader bundle list with the last-known-good snapshot and local
+    /// dependency evidence. This is read-only; callers must still ask before disabling a result.
     /// </summary>
-    public static List<string> FindSuspectBundles(string profileDir, string profile)
+    public static IReadOnlyList<PluginRecoveryCandidate> AnalyzeSuspectBundles(
+        string profileDir,
+        string profile,
+        IEnumerable<string>? recentStderr = null)
     {
         var current = ReadBundles(profileDir);
+        var baseline = ReadHealthyBundles(profile);
+        return PluginRecoveryDiagnostics.Analyze(profileDir, current, baseline, recentStderr);
+    }
+
+    public static List<string> FindSuspectBundles(string profileDir, string profile)
+        => AnalyzeSuspectBundles(profileDir, profile).Select(candidate => candidate.Bundle).ToList();
+
+    public static string DescribeSuspects(IEnumerable<PluginRecoveryCandidate> candidates)
+        => string.Join("\n", candidates.Select(candidate => "· " + candidate.Bundle + "："
+            + string.Join("；", candidate.Evidence.Select(evidence => evidence.Detail))));
+
+    private static List<string> ReadHealthyBundles(string profile)
+    {
         var baseline = new List<string>();
         var meta = Path.Combine(SnapshotDir(profile), "meta.json");
         try
@@ -258,16 +274,7 @@ internal static class DesktopRecovery
             }
         }
         catch { }
-
-        // 内置基线永远不动
-        var protectedNames = new[] { "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app" };
-        var added = current.Where(x => !baseline.Contains(x) && !protectedNames.Contains(x)).ToList();
-        if (added.Count == 0 && current.Count > 0)
-        {
-            var last = current[^1];
-            if (!protectedNames.Contains(last)) added.Add(last);
-        }
-        return added;
+        return baseline;
     }
 
     /// <summary>

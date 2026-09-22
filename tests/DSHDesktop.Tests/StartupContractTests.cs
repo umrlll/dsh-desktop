@@ -126,30 +126,79 @@ public class StartupContractTests
         Assert.Contains("_updates.TryBeginApply(", source);
         Assert.Contains("_updates.CompleteApply(", source);
         Assert.Contains("_updates.FailApply(", source);
+        Assert.Contains("_updates.TryDismissCandidate", source);
+        Assert.Contains("_releaseSkips.IsSkipped", source);
+        Assert.Contains("_releaseSkips.Skip", source);
         Assert.DoesNotContain("bool _checkingForUpdates", source);
         Assert.DoesNotContain("VersionUpdate.Result? _lastUpdate", source);
+    }
+
+    [Fact]
+    public void UnsignedNpmUpdatePath_IsNotExposedAndSignedReleaseUpdaterOwnsApplication()
+    {
+        var source = File.ReadAllText(SourceScanner.ProductFile("MainWindow.xaml.cs"));
+        var popup = SourceScanner.MethodBody(source, source.IndexOf("private void ShowUpdatePopup()", StringComparison.Ordinal));
+        var apply = SourceScanner.MethodBody(source, source.IndexOf("private async Task ApplyUpdateAsync()", StringComparison.Ordinal));
+
+        Assert.Contains("TryGetSignedReleaseSource", popup);
+        Assert.Contains("签名更新通道", popup);
+        Assert.Contains("signedReleaseRequired", apply);
+        Assert.Contains("TryGetSignedReleaseSource", apply);
+        Assert.Contains("RunSignedReleaseUpdateAsync", apply);
+        Assert.DoesNotContain("RunUpdateAsync(target)", apply);
+        Assert.DoesNotContain("RunUpdateAsync", source);
+        Assert.DoesNotContain("@deepseek-ai/dsh@", source);
+        Assert.True(
+            apply.IndexOf("signedReleaseRequired", StringComparison.Ordinal)
+            < apply.IndexOf("_updates.TryBeginApply", StringComparison.Ordinal),
+            "未配置签名发布源时不得进入 npm staging 更新路径。");
+
+        Assert.Contains("RuntimeReleaseUpdater", source);
+        Assert.Contains("RuntimeReleaseFeedClient", source);
+        Assert.Contains("DSH_DESKTOP_RELEASE_FEED_CONFIG", source);
+        Assert.Contains("DSH_DESKTOP_RELEASE_CHANNEL", source);
+        Assert.Contains("result.Acquisition?.Descriptor?.DshVersion", source);
+        Assert.Contains("FetchSignedReleaseDescriptorAsync", source);
+        Assert.Contains("FetchVerifiedDescriptorAsync", source);
+        Assert.Contains("IsSignedCandidateCompatible", source);
+        Assert.Contains("RuntimeReleaseCompatibility.Evaluate", source);
+        Assert.Contains("AcquireAsync(", source);
+        Assert.Contains("ActivateAcquiredCandidate", source);
+        Assert.Contains("等待安装确认", source);
+        Assert.Contains("暂不安装", source);
+        Assert.Contains("DiscardAcquiredCandidate", source);
+        Assert.Contains("_releaseUpdateCts", source);
+        Assert.Contains("CreateLinkedTokenSource(cancellationToken)", source);
+        Assert.Contains("_releaseUpdateCts?.Cancel()", source);
+        Assert.Contains("_pendingUpdateRuntimeId", source);
+        Assert.Contains("RollBackPendingUpdateForExit()", source);
     }
 
     [Fact]
     public void UpdateFlow_StagesVerifiedSlotAndRollsBackOnFrontendHealthFailure()
     {
         var source = File.ReadAllText(SourceScanner.ProductFile("MainWindow.xaml.cs"));
-        var updateMethod = source.IndexOf("private static async Task<RuntimeUpdateStageResult> RunUpdateAsync(", StringComparison.Ordinal);
+        var updateMethod = source.IndexOf("private async Task<RuntimeReleaseUpdateResult> RunSignedReleaseUpdateAsync(", StringComparison.Ordinal);
         Assert.True(updateMethod >= 0, "找不到不可变槽更新入口");
         var body = SourceScanner.MethodBody(source, updateMethod);
 
-        Assert.Contains("current.IsVerified", body);
-        Assert.Contains("new RuntimeUpdateStager(Runtime.WritableRuntimeRoot)", body);
-        Assert.Contains("context.DshInstallDirectory", body);
+        Assert.Contains("RuntimeReleaseFeedClient", body);
+        Assert.Contains("RuntimeReleaseUpdater", body);
+        Assert.Contains("updater.AcquireAsync", body);
+        Assert.Contains("updater.ActivateAcquiredCandidate", body);
+        Assert.True(
+            body.IndexOf("updater.AcquireAsync", StringComparison.Ordinal)
+                < body.IndexOf("updater.ActivateAcquiredCandidate", StringComparison.Ordinal),
+            "候选必须先获取和验证，再经用户确认后接纳。");
+        Assert.DoesNotContain("@deepseek-ai/dsh@", body);
         var stager = File.ReadAllText(Path.Combine(
             SourceScanner.RepoRoot, "src", "DSHDesktop.Core", "RuntimeUpdateStager.cs"));
         Assert.Contains("slots.PruneInactiveAndStaging()", stager);
-        Assert.DoesNotContain("current.InstallRoot", body);
         Assert.DoesNotContain("UpdateBackup.", source);
         Assert.Contains("WaitForFrontendHealthAsync", source);
         Assert.Contains("new RuntimeSlotManager(Runtime.WritableRuntimeRoot)", source);
         Assert.Contains("var rollback = slots.Rollback()", source);
-        Assert.Contains("slots.QuarantineInactive(result.RuntimeId)", source);
+        Assert.Contains("slots.QuarantineInactive(result.Adoption.RuntimeId)", source);
     }
 
     [Fact]
@@ -164,5 +213,71 @@ public class StartupContractTests
         Assert.Contains("_recovery.RecordHealthy()", source);
         Assert.DoesNotContain("int _autoRestarts", source);
         Assert.DoesNotContain("MaxAutoRestarts", source);
+    }
+
+    [Fact]
+    public void RuntimeManagement_RequiresConfirmationAndRestoresTheOriginalSlotAfterHealthFailure()
+    {
+        var source = File.ReadAllText(SourceScanner.ProductFile("MainWindow.xaml.cs"));
+        var xaml = File.ReadAllText(SourceScanner.ProductFile("MainWindow.xaml"));
+        var method = source.IndexOf("private async void OnMenuManageRuntime(", StringComparison.Ordinal);
+        Assert.True(method >= 0, "找不到运行时管理入口");
+        var body = SourceScanner.MethodBody(source, method);
+
+        Assert.Contains("运行时信息与回退", xaml);
+        Assert.Contains("RuntimeSlotManager", body);
+        Assert.Contains("回退并重启", body);
+        Assert.Contains("cancel: \"取消\"", body);
+        Assert.Contains("slots.Rollback()", body);
+        Assert.Contains("WaitForFrontendHealthAsync", body);
+        Assert.Contains("restoredHealthy", body);
+        Assert.Contains("Runtime.Invalidate()", body);
+    }
+
+    [Fact]
+    public void DiagnosticExport_OffersAWindowsNativeDestinationPicker()
+    {
+        var source = File.ReadAllText(SourceScanner.ProductFile("MainWindow.xaml.cs"));
+        var method = source.IndexOf("private async void OnExportDiagnostics(", StringComparison.Ordinal);
+        Assert.True(method >= 0, "找不到诊断导出入口");
+        var body = SourceScanner.MethodBody(source, method);
+
+        Assert.Contains("FolderBrowserDialog", body);
+        Assert.Contains("选择目录", body);
+        Assert.Contains("导出到日志目录", body);
+        Assert.Contains("picker.SelectedPath", body);
+    }
+
+    [Fact]
+    public void DesktopProject_DeclaresPerMonitorV2DpiAwareness()
+    {
+        var project = File.ReadAllText(Path.Combine(
+            SourceScanner.RepoRoot, "src", "DSHDesktop", "DSHDesktop.csproj"));
+        var manifest = File.ReadAllText(Path.Combine(
+            SourceScanner.RepoRoot, "src", "DSHDesktop", "app.manifest"));
+
+        Assert.Contains("<ApplicationManifest>app.manifest</ApplicationManifest>", project);
+        Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", project);
+        Assert.Contains("asInvoker", manifest);
+    }
+
+    [Fact]
+    public void RecoveryActions_RequireExplicitConfirmationBeforeChangingTheProfile()
+    {
+        var source = File.ReadAllText(SourceScanner.ProductFile("MainWindow.xaml.cs"));
+        var method = source.IndexOf("private async Task ShowRecoveryAssistantAsync(", StringComparison.Ordinal);
+        Assert.True(method >= 0, "找不到恢复助手入口");
+        var body = SourceScanner.MethodBody(source, method);
+
+        Assert.Contains("ConfirmRecoveryMutation(", body);
+        Assert.Contains("禁用可疑插件？", body);
+        Assert.Contains("恢复被禁用的插件？", body);
+        Assert.Contains("回滚到可用状态？", body);
+        Assert.Contains("DesktopRecovery.DisableBundles", body);
+        Assert.Contains("DesktopRecovery.ReEnableBundles", body);
+        Assert.Contains("DesktopRecovery.Rollback", body);
+        Assert.Contains("cancel: \"取消\"", source);
+        Assert.Contains("AnalyzeSuspectBundles", body);
+        Assert.Contains("DescribeSuspects", body);
     }
 }

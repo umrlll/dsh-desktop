@@ -10,6 +10,33 @@ namespace DSHDesktop.Tests;
 public class RuntimeReleaseFeedClientTests
 {
     [Fact]
+    public async Task FetchVerifiedDescriptor_RejectsWrongChannelWithoutPayloadRequest()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var descriptor = Descriptor(Encoding.UTF8.GetBytes("payload"));
+        var handler = new RouteHandler().Add(MetadataUri, () => JsonResponse(Sign(descriptor, key)));
+        using var http = new HttpClient(handler);
+
+        var result = await new RuntimeReleaseFeedClient(http).FetchVerifiedDescriptorAsync(
+            MetadataUri,
+            Trusted(key),
+            "stable");
+
+        Assert.Equal(RuntimeReleaseMetadataStatus.ChannelMismatch, result.Status);
+        Assert.Equal(descriptor.DshVersion, result.Descriptor?.DshVersion);
+        Assert.Single(handler.RequestedUris);
+
+        var accepted = await new RuntimeReleaseFeedClient(http).FetchVerifiedDescriptorAsync(
+            MetadataUri,
+            Trusted(key),
+            "beta");
+
+        Assert.True(accepted.Success);
+        Assert.Equal(descriptor.RuntimeId, accepted.Descriptor?.RuntimeId);
+        Assert.Equal(2, handler.RequestedUris.Count);
+    }
+
+    [Fact]
     public async Task FetchVerifiedPayload_WritesOnlyVerifiedPayloadToDestination()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);

@@ -35,6 +35,7 @@ public interface IUpdateCoordinator
     bool TryBeginCheck(bool manual);
     bool CompleteCheck(UpdateCandidate? candidate);
     bool FailCheck(string error);
+    bool TryDismissCandidate(out UpdateCandidate? candidate);
     bool TryBeginApply(out UpdateCandidate? candidate);
     bool CompleteApply(string installedVersion);
     bool FailApply(string error);
@@ -88,6 +89,17 @@ public sealed class UpdateCoordinator : IUpdateCoordinator
                     _snapshot.HasChecked,
                     _snapshot.Candidate,
                     NormalizeError(error));
+            return true;
+        }
+    }
+
+    public bool TryDismissCandidate(out UpdateCandidate? candidate)
+    {
+        lock (_sync)
+        {
+            candidate = _snapshot.Candidate;
+            if (_snapshot.IsBusy || candidate == null) return false;
+            _snapshot = Next(UpdatePhase.UpToDate, _snapshot.HasChecked);
             return true;
         }
     }

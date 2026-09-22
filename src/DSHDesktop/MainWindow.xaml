@@ -685,6 +685,13 @@
                                            FontSize="14" VerticalAlignment="Center"/>
                             </MenuItem.Icon>
                         </MenuItem>
+                        <MenuItem Header="运行时信息与回退" Click="OnMenuManageRuntime"
+                                  auto:AutomationProperties.Name="运行时信息与回退">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE777;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                            </MenuItem.Icon>
+                        </MenuItem>
                         <MenuItem x:Name="MenuSafeMode" Header="切换到安全模式" Click="OnMenuToggleSafeMode"
                                   auto:AutomationProperties.Name="切换安全模式">
                             <MenuItem.Icon>
@@ -769,9 +776,12 @@
                         <!-- 底栏：细分隔线 + 主/次/收尾三档动作。 -->
                         <Border Height="1" Background="{StaticResource DividerBrush}" Margin="0,14,0,0"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                            <Button x:Name="BtnPopupUpdate" Content="立即更新" Click="OnApplyUpdate"
+                            <Button x:Name="BtnPopupUpdate" Content="下载并验证" Click="OnApplyUpdate"
                                     Style="{StaticResource UpdatePrimaryButton}" Margin="0,0,8,0"
-                                    auto:AutomationProperties.Name="立即更新"/>
+                                    auto:AutomationProperties.Name="下载并验证更新"/>
+                            <Button x:Name="BtnPopupSkip" Content="跳过此版本" Click="OnSkipUpdate"
+                                    Style="{StaticResource UpdateGhostButton}" Margin="0,0,8,0"
+                                    auto:AutomationProperties.Name="跳过此版本"/>
                             <Button x:Name="BtnPopupBrowser" Content="在浏览器中查看" Click="OnOpenReleasePage"
                                     Style="{StaticResource TitleBarPopupButton}" Margin="0,0,8,0"
                                     auto:AutomationProperties.Name="在浏览器中查看发布页面"/>

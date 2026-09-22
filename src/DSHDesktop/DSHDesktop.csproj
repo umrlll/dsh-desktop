@@ -11,6 +11,8 @@
     <RootNamespace>DSHDesktop</RootNamespace>
     <AssemblyName>DSHDesktop</AssemblyName>
     <ApplicationIcon>DSH.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <!-- 版本与产品元数据集中在仓库根的 Directory.Build.targets（版本号治理单一来源） -->
   </PropertyGroup>
 

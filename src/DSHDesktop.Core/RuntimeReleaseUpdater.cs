@@ -40,13 +40,39 @@ public sealed class RuntimeReleaseUpdater
 
     public async Task<RuntimeReleaseUpdateResult> AcquireAndActivateAsync(
         RuntimeReleaseSource source,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<RuntimeReleaseDescriptor, string?>? descriptorValidator = null)
+    {
+        var acquisition = await AcquireAsync(source, cancellationToken, descriptorValidator).ConfigureAwait(false);
+        return ActivateAcquiredCandidate(acquisition);
+    }
+
+    /// <summary>
+    /// Downloads, verifies, and safely unpacks a release into this store's staging directory
+    /// without changing the active slot. Hosts may use this boundary to obtain a second user
+    /// confirmation before installation.
+    /// </summary>
+    public Task<RuntimeReleaseAcquireResult> AcquireAsync(
+        RuntimeReleaseSource source,
+        CancellationToken cancellationToken = default,
+        Func<RuntimeReleaseDescriptor, string?>? descriptorValidator = null)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var acquisition = await _acquirer.AcquireAsync(
+        return _acquirer.AcquireAsync(
             source,
             Path.Combine(_runtimeRoot, RuntimeSlotManager.StagingDirectoryName),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            descriptorValidator);
+    }
+
+    /// <summary>
+    /// Re-verifies and atomically activates an acquired staging candidate. The candidate path is
+    /// constrained by <see cref="RuntimeUpdateStager"/>, so callers cannot use this to adopt an
+    /// arbitrary directory.
+    /// </summary>
+    public RuntimeReleaseUpdateResult ActivateAcquiredCandidate(RuntimeReleaseAcquireResult acquisition)
+    {
+        ArgumentNullException.ThrowIfNull(acquisition);
         if (!acquisition.Success)
         {
             return new RuntimeReleaseUpdateResult(
@@ -73,5 +99,34 @@ public sealed class RuntimeReleaseUpdater
             RuntimeReleaseUpdateStatus.Activated,
             acquisition,
             adoption);
+    }
+
+    /// <summary>
+    /// Removes a verified-but-unaccepted candidate after a user declines installation. Only a
+    /// direct child of this runtime store's staging directory is eligible; paths outside staging
+    /// are rejected without filesystem changes.
+    /// </summary>
+    public bool DiscardAcquiredCandidate(RuntimeReleaseAcquireResult acquisition)
+    {
+        ArgumentNullException.ThrowIfNull(acquisition);
+        if (!acquisition.Success || string.IsNullOrWhiteSpace(acquisition.RuntimeDirectory)) return false;
+
+        try
+        {
+            var stagingRoot = Path.GetFullPath(Path.Combine(_runtimeRoot, RuntimeSlotManager.StagingDirectoryName));
+            var candidate = Path.GetFullPath(acquisition.RuntimeDirectory);
+            if (!string.Equals(Path.GetDirectoryName(candidate), stagingRoot, StringComparison.OrdinalIgnoreCase)
+                || !Directory.Exists(candidate))
+            {
+                return false;
+            }
+
+            Directory.Delete(candidate, recursive: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }

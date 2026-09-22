@@ -12,11 +12,11 @@ public class PortableReleaseArchiveTests
         using var temp = new RuntimeSlotManagerTests.TempDirectory();
         var publish = CreateVerifiedPublishRoot(temp.Path);
 
-        var result = PortableReleaseArchive.Validate(publish);
+        var result = PortableReleaseArchive.Validate(publish, expectedDesktopVersion: "1.0.0");
 
         Assert.True(result.Success);
         Assert.Equal(PortableReleaseArchiveStatus.Validated, result.Status);
-        Assert.Equal(8, result.FileCount);
+        Assert.Equal(10, result.FileCount);
         Assert.Empty(Directory.EnumerateFiles(temp.Path, "*.zip", SearchOption.AllDirectories));
     }
 
@@ -35,7 +35,7 @@ public class PortableReleaseArchiveTests
         Assert.True(secondResult.Success);
         Assert.Equal(File.ReadAllBytes(first), File.ReadAllBytes(second));
         using var archive = ZipFile.OpenRead(first);
-        Assert.Equal(new[] { "DSHDesktop.dll", "DSHDesktop.exe", "runtime/active.json" },
+        Assert.Equal(new[] { "DSHDesktop.dll", "DSHDesktop.exe", "LICENSE", "NOTICE.md", "runtime/active.json" },
             archive.Entries.Select(entry => entry.FullName).Where(name => !name.Contains("versions/", StringComparison.Ordinal)).ToArray());
         Assert.Contains(archive.Entries, entry => entry.FullName.EndsWith("desktop-runtime.json", StringComparison.Ordinal));
     }
@@ -56,6 +56,43 @@ public class PortableReleaseArchiveTests
     }
 
     [Fact]
+    public void Validate_RejectsInstallerVersionThatDiffersFromActiveRuntime()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var publish = CreateVerifiedPublishRoot(temp.Path);
+
+        var result = PortableReleaseArchive.Validate(publish, expectedDesktopVersion: "1.0.1");
+
+        Assert.Equal(PortableReleaseArchiveStatus.VersionMismatch, result.Status);
+        Assert.False(result.Success);
+    }
+
+    [Fact]
+    public void Validate_RejectsVerifiedRuntimeWithoutRequiredLegalFiles()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var publish = CreateVerifiedPublishRoot(temp.Path, includeLegalFiles: false);
+
+        var result = PortableReleaseArchive.Validate(publish);
+
+        Assert.Equal(PortableReleaseArchiveStatus.ReleaseMetadataIncomplete, result.Status);
+        Assert.False(result.Success);
+    }
+
+    [Fact]
+    public void Validate_RejectsShellBinaryWithoutTheActiveRuntimeVersion()
+    {
+        using var temp = new RuntimeSlotManagerTests.TempDirectory();
+        var publish = CreateVerifiedPublishRoot(temp.Path);
+        File.WriteAllText(Path.Combine(publish, "DSHDesktop.dll"), "not a versioned desktop binary");
+
+        var result = PortableReleaseArchive.Validate(publish);
+
+        Assert.Equal(PortableReleaseArchiveStatus.VersionMismatch, result.Status);
+        Assert.False(result.Success);
+    }
+
+    [Fact]
     public void Create_RejectsOutputWithinPublishRoot()
     {
         using var temp = new RuntimeSlotManagerTests.TempDirectory();
@@ -66,12 +103,18 @@ public class PortableReleaseArchiveTests
         Assert.Equal(PortableReleaseArchiveStatus.InvalidRequest, result.Status);
     }
 
-    private static string CreateVerifiedPublishRoot(string root)
+    private static string CreateVerifiedPublishRoot(string root, bool includeLegalFiles = true)
     {
         var publish = Path.Combine(root, "publish");
         Directory.CreateDirectory(publish);
-        File.WriteAllText(Path.Combine(publish, "DSHDesktop.exe"), "exe");
-        File.WriteAllText(Path.Combine(publish, "DSHDesktop.dll"), "dll");
+        var shellAssembly = typeof(RuntimeManifest).Assembly.Location;
+        File.Copy(shellAssembly, Path.Combine(publish, "DSHDesktop.exe"));
+        File.Copy(shellAssembly, Path.Combine(publish, "DSHDesktop.dll"));
+        if (includeLegalFiles)
+        {
+            File.WriteAllText(Path.Combine(publish, "LICENSE"), "license");
+            File.WriteAllText(Path.Combine(publish, "NOTICE.md"), "notice");
+        }
         var runtimeRoot = Path.Combine(publish, "runtime");
         RuntimeSlotManagerTests.CreateSlot(runtimeRoot, "runtime-a", "runtime");
         Assert.True(new RuntimeSlotManager(runtimeRoot).Activate("runtime-a").Success);

@@ -9,6 +9,8 @@ public enum PortableReleaseArchiveStatus
     InvalidRequest,
     ShellIncomplete,
     RuntimeNotReady,
+    ReleaseMetadataIncomplete,
+    VersionMismatch,
     UnsafePath,
     Failed,
 }
@@ -82,7 +84,9 @@ public static class PortableReleaseArchive
     /// Verifies that a publish directory is eligible to become a Portable ZIP or installer.
     /// This has no output side effects and is the gate used by packaging automation.
     /// </summary>
-    public static PortableReleaseArchiveResult Validate(string publishRoot)
+    public static PortableReleaseArchiveResult Validate(
+        string publishRoot,
+        string? expectedDesktopVersion = null)
     {
         if (string.IsNullOrWhiteSpace(publishRoot))
             return new PortableReleaseArchiveResult(PortableReleaseArchiveStatus.InvalidRequest, Error: "Publish root is required.");
@@ -103,6 +107,34 @@ public static class PortableReleaseArchive
                 return new PortableReleaseArchiveResult(
                     PortableReleaseArchiveStatus.RuntimeNotReady,
                     Error: runtime.Error ?? runtime.Status.ToString());
+            }
+
+            if (!File.Exists(Path.Combine(root, "LICENSE"))
+                || !File.Exists(Path.Combine(root, "NOTICE.md")))
+            {
+                return new PortableReleaseArchiveResult(
+                    PortableReleaseArchiveStatus.ReleaseMetadataIncomplete,
+                    Error: "Publish root is missing required LICENSE or NOTICE.md.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedDesktopVersion)
+                && !string.Equals(
+                    runtime.Manifest?.DesktopVersion,
+                    expectedDesktopVersion,
+                    StringComparison.Ordinal))
+            {
+                return new PortableReleaseArchiveResult(
+                    PortableReleaseArchiveStatus.VersionMismatch,
+                    Error: "Portable runtime desktopVersion does not match the requested installer version.");
+            }
+
+            var expectedShellVersion = runtime.Manifest!.DesktopVersion;
+            if (!HasExpectedShellVersion(root, "DSHDesktop.exe", expectedShellVersion)
+                || !HasExpectedShellVersion(root, "DSHDesktop.dll", expectedShellVersion))
+            {
+                return new PortableReleaseArchiveResult(
+                    PortableReleaseArchiveStatus.VersionMismatch,
+                    Error: "Desktop shell binary version does not match the active runtime desktopVersion.");
             }
 
             return TryCollectFiles(root, out var files, out var error)
@@ -169,5 +201,28 @@ public static class PortableReleaseArchive
     {
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
         return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasExpectedShellVersion(string root, string fileName, string expectedVersion)
+    {
+        try
+        {
+            var productVersion = System.Diagnostics.FileVersionInfo
+                .GetVersionInfo(Path.Combine(root, fileName))
+                .ProductVersion;
+            if (string.IsNullOrWhiteSpace(productVersion)) return false;
+
+            // SDK appends the provenance suffix as SemVer build metadata. It does not alter the
+            // release identity recorded in desktop-runtime.json, so compare the shared prefix.
+            var buildMetadata = productVersion.IndexOf('+');
+            var releaseVersion = buildMetadata >= 0
+                ? productVersion[..buildMetadata]
+                : productVersion;
+            return string.Equals(releaseVersion, expectedVersion, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }

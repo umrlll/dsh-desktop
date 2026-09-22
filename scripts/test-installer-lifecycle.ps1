@@ -46,6 +46,8 @@ $installerOutput = Join-Path $work 'installers'
 $installRoot = Join-Path $work 'install-root'
 $userDataRoot = Join-Path $work 'user-data'
 $sentinel = Join-Path $userDataRoot 'retain-after-uninstall.txt'
+$testIdentity = 'DSHDesktop-Lifecycle-' + [Guid]::NewGuid().ToString('N')
+$testRegistryKey = 'Software\' + $testIdentity
 
 function Invoke-Setup([string]$InstallerPath, [string[]]$Arguments, [string]$Stage) {
     # Invoke directly instead of Start-Process: some hosts expose both Path and PATH in the
@@ -54,6 +56,61 @@ function Invoke-Setup([string]$InstallerPath, [string[]]$Arguments, [string]$Sta
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw "$Stage failed with exit code $exitCode."
+    }
+}
+
+function Compare-SemanticVersion([string]$Left, [string]$Right) {
+    function Split-SemanticVersion([string]$Value) {
+        $withoutBuild = $Value.Split('+', 2)[0]
+        $parts = $withoutBuild.Split('-', 2)
+        [PSCustomObject]@{
+            Core = @($parts[0].Split('.') | ForEach-Object { [Int64]$_ })
+            Prerelease = if ($parts.Count -gt 1) { @($parts[1].Split('.')) } else { @() }
+        }
+    }
+
+    $leftVersion = Split-SemanticVersion $Left
+    $rightVersion = Split-SemanticVersion $Right
+    foreach ($index in 0..2) {
+        if ($leftVersion.Core[$index] -ne $rightVersion.Core[$index]) {
+            return [Math]::Sign($leftVersion.Core[$index] - $rightVersion.Core[$index])
+        }
+    }
+    if ($leftVersion.Prerelease.Count -eq 0 -and $rightVersion.Prerelease.Count -eq 0) { return 0 }
+    if ($leftVersion.Prerelease.Count -eq 0) { return 1 }
+    if ($rightVersion.Prerelease.Count -eq 0) { return -1 }
+
+    $common = [Math]::Min($leftVersion.Prerelease.Count, $rightVersion.Prerelease.Count)
+    foreach ($index in 0..($common - 1)) {
+        $leftId = $leftVersion.Prerelease[$index]
+        $rightId = $rightVersion.Prerelease[$index]
+        $leftNumeric = $leftId -match '^\d+$'
+        $rightNumeric = $rightId -match '^\d+$'
+        if ($leftNumeric -and $rightNumeric) {
+            $leftNormalized = $leftId.TrimStart('0'); if ($leftNormalized.Length -eq 0) { $leftNormalized = '0' }
+            $rightNormalized = $rightId.TrimStart('0'); if ($rightNormalized.Length -eq 0) { $rightNormalized = '0' }
+            if ($leftNormalized.Length -ne $rightNormalized.Length) {
+                return [Math]::Sign($leftNormalized.Length - $rightNormalized.Length)
+            }
+            $comparison = [string]::CompareOrdinal($leftNormalized, $rightNormalized)
+        }
+        elseif ($leftNumeric) { return -1 }
+        elseif ($rightNumeric) { return 1 }
+        else { $comparison = [string]::CompareOrdinal($leftId, $rightId) }
+        if ($comparison -ne 0) { return [Math]::Sign($comparison) }
+    }
+    return [Math]::Sign($leftVersion.Prerelease.Count - $rightVersion.Prerelease.Count)
+}
+
+if ((Compare-SemanticVersion $OlderVersion $NewerVersion) -ge 0) {
+    throw 'Lifecycle verification requires OlderVersion to be semantically lower than NewerVersion.'
+}
+
+function Invoke-SetupExpectingFailure([string]$InstallerPath, [string[]]$Arguments, [string]$Stage) {
+    & $InstallerPath @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) {
+        throw "$Stage unexpectedly succeeded."
     }
 }
 
@@ -97,8 +154,10 @@ try {
     New-Item -ItemType Directory -Path $installerOutput, $userDataRoot -Force | Out-Null
     [IO.File]::WriteAllText($sentinel, 'must survive ordinary uninstall')
 
-    & $packager -SourceDir $olderSource -Version $OlderVersion -OutputDir $installerOutput -IsccPath $IsccPath
-    & $packager -SourceDir $newerSource -Version $NewerVersion -OutputDir $installerOutput -IsccPath $IsccPath
+    & $packager -SourceDir $olderSource -Version $OlderVersion -OutputDir $installerOutput -IsccPath $IsccPath `
+        -AppId $testIdentity -RegistryKey $testRegistryKey
+    & $packager -SourceDir $newerSource -Version $NewerVersion -OutputDir $installerOutput -IsccPath $IsccPath `
+        -AppId $testIdentity -RegistryKey $testRegistryKey
 
     $olderInstaller = Join-Path $installerOutput "DSHDesktop-Setup-$OlderVersion.exe"
     $newerInstaller = Join-Path $installerOutput "DSHDesktop-Setup-$NewerVersion.exe"
@@ -119,14 +178,21 @@ try {
     Wait-ForHash $installedShell (Get-FileHash -LiteralPath $newerShell -Algorithm SHA256).Hash 'Silent upgrade'
     $uninstaller = Find-Uninstaller $installRoot
 
+    Invoke-SetupExpectingFailure $olderInstaller $installArguments 'Silent downgrade rejection'
+    Wait-ForHash $installedShell (Get-FileHash -LiteralPath $newerShell -Algorithm SHA256).Hash 'Silent downgrade rejection'
+
     Invoke-Setup $uninstaller @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') 'Silent uninstall'
     Wait-ForMissingPath $installRoot 'Silent uninstall'
     if (-not (Test-Path -LiteralPath $sentinel -PathType Leaf)) {
         throw 'Ordinary uninstall removed data outside the install root.'
     }
-    Write-Host 'Installer lifecycle passed: install, upgrade, uninstall, and external user-data retention.'
+    if (Test-Path -LiteralPath ("HKCU:\" + $testRegistryKey)) {
+        throw 'Silent uninstall retained the lifecycle-only installed-version registry key.'
+    }
+    Write-Host 'Installer lifecycle passed: install, upgrade, downgrade rejection, uninstall, and external user-data retention.'
 }
 finally {
+    Remove-Item -LiteralPath ("HKCU:\" + $testRegistryKey) -Recurse -Force -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $work) {
         # Inno Setup can retain the just-launched installer handle briefly after its child
         # process exits. Cleanup must not turn a successful lifecycle assertion into a failure.

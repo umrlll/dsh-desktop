@@ -82,6 +82,19 @@ public class UpdateCoordinatorTests
     }
 
     [Fact]
+    public void DismissCandidate_ClearsAvailableUpdateWithoutStartingAnApply()
+    {
+        var coordinator = CoordinatorWithCandidate();
+
+        Assert.True(coordinator.TryDismissCandidate(out var dismissed));
+
+        Assert.Equal(Candidate, dismissed);
+        Assert.Equal(UpdatePhase.UpToDate, coordinator.Snapshot.Phase);
+        Assert.Null(coordinator.Snapshot.Candidate);
+        Assert.False(coordinator.Snapshot.IsBusy);
+    }
+
+    [Fact]
     public void SuccessfulApply_ClearsCandidateAndRecordsVersion()
     {
         var coordinator = CoordinatorWithCandidate();

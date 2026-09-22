@@ -3,16 +3,35 @@
   "title": "DSH Desktop signed runtime release feed configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "metadataUrl", "channel", "trustedPublicKeys"],
+  "required": ["schemaVersion", "channel", "trustedPublicKeys"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "metadataUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
     "channel": { "enum": ["stable", "beta"] },
+    "channelMetadataUrls": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 2,
+      "additionalProperties": false,
+      "properties": {
+        "stable": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "beta": { "type": "string", "format": "uri", "pattern": "^https://" }
+      }
+    },
     "trustedPublicKeys": {
       "type": "object",
       "minProperties": 1,
       "maxProperties": 8,
       "additionalProperties": { "type": "string", "minLength": 32 }
     }
-  }
+  },
+  "oneOf": [
+    {
+      "required": ["metadataUrl"],
+      "not": { "required": ["channelMetadataUrls"] }
+    },
+    {
+      "required": ["channelMetadataUrls"]
+    }
+  ]
 }

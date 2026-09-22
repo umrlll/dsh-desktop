@@ -47,7 +47,8 @@ public sealed class RuntimeReleaseAcquirer
     public async Task<RuntimeReleaseAcquireResult> AcquireAsync(
         RuntimeReleaseSource source,
         string stagingRoot,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<RuntimeReleaseDescriptor, string?>? descriptorValidator = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(stagingRoot);
@@ -83,6 +84,16 @@ public sealed class RuntimeReleaseAcquirer
                         : RuntimeReleaseAcquireStatus.DownloadFailed,
                     download.Descriptor,
                     Error: download.Error,
+                    DownloadStatus: download.Status);
+            }
+
+            var descriptorError = descriptorValidator?.Invoke(download.Descriptor!);
+            if (!string.IsNullOrWhiteSpace(descriptorError))
+            {
+                return new RuntimeReleaseAcquireResult(
+                    RuntimeReleaseAcquireStatus.ManifestRejected,
+                    download.Descriptor,
+                    Error: descriptorError,
                     DownloadStatus: download.Status);
             }
 

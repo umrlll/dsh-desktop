@@ -145,7 +145,9 @@ internal static class Program
 
     private static int VerifyPortable(IReadOnlyDictionary<string, string> options)
     {
-        var result = PortableReleaseArchive.Validate(Required(options, "root"));
+        var result = PortableReleaseArchive.Validate(
+            Required(options, "root"),
+            Optional(options, "expected-desktop-version"));
         if (!result.Success)
             throw new InvalidDataException("Portable publish root is invalid: " + (result.Error ?? result.Status.ToString()));
         Console.WriteLine($"runtime-manifest: portable publish root verified ({result.FileCount} files)");
@@ -231,6 +233,11 @@ internal static class Program
         => options.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)
             ? value
             : throw new ArgumentException("缺少参数 --" + name);
+
+    private static string? Optional(IReadOnlyDictionary<string, string> options, string name)
+        => options.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : null;
 
     private static string DescribeIssues(IEnumerable<RuntimeManifestIssue> issues)
         => string.Join("；", issues.Select(issue => issue.Code + (issue.Path == null ? "" : "(" + issue.Path + ")")));

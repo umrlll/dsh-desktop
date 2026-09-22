@@ -22,7 +22,7 @@ Chromium；桌面壳自身较小，完整发布载荷会另外携带锁定的 No
 | 签名 | **仅自签**：签名与时间戳成立，但**不消除 SmartScreen 警告**（见 §3） |
 | 定位 | 个人自用/实验；**不建议**在未审阅源码的情况下用于生产或分发 |
 
-已知缺口（尚未实施）：完整 CI 运行时输入、实际 Portable/安装包资产、可信发行签名和 Desktop 专用宿主适配。CI 已在可选签名后为 shell 发布目录生成 SPDX SBOM 与 `SHA256SUMS.txt`；安装器定义和打包入口会拒绝 shell-only 或损坏 runtime，但可安装发布物仍待锁定 runtime 输入。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
+已知缺口（尚未实施）：完整 CI 运行时输入、实际 Portable/安装包资产、可信发行签名和 Desktop 专用宿主适配。CI 已在可选签名后为 shell 发布目录生成 SPDX SBOM 与 `SHA256SUMS.txt`；安装器定义和打包入口会拒绝 shell-only 或损坏 runtime，但可安装发布物仍待锁定 runtime 输入。更新界面可检查版本和查看说明；只有部署方通过 `DSH_DESKTOP_RELEASE_FEED_CONFIG` 注入有效的 HTTPS/P-256 签名发布源后，才启用下载、验签、解包、槽激活和健康失败回退，绝不回退到 npm 直连安装。发布配置可固定 stable/beta 两个端点；`DSH_DESKTOP_RELEASE_CHANNEL` 只能在其中选择，不能指定任意来源或公钥。不可变运行时槽、失败回退、版本号治理、兼容矩阵与自签流程
 **已经落地**（见 §3、§6、§7）。
 
 ---
@@ -60,7 +60,8 @@ dotnet publish src\DSHDesktop\DSHDesktop.csproj -c Release `
 > CI 在这一阶段承担的是编译、测试和发布规则验证，不应把其 artifact 当成正式发行包。
 
 完整 Portable 发布目录准备完成后，必须使用统一入口生成安装器；它会在调用 Inno Setup 前验证
-`runtime\active.json`、被选中的 immutable slot 和 runtime manifest 中的每一个文件，并拒绝把输出写回源目录：
+`runtime\active.json`、被选中的 immutable slot 和 runtime manifest 中的每一个文件，强制传入的安装器版本与
+活动 runtime 的 `desktopVersion` 一致，并拒绝把输出写回源目录：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-installer.ps1 `
@@ -71,7 +72,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-installer.ps
 
 该命令不是正式发布授权：输入仍须先通过兼容矩阵、输入锁、签名与干净机器安装/升级/卸载验收。
 
-对两个已完成的 Portable 输入，可运行下列生命周期验收。脚本不启动桌面程序；它在临时目录中生成两套安装器，静默安装旧版、覆盖升级至新版，以 `DSHDesktop.exe` 的 SHA-256 确认替换，随后静默卸载并确认临时安装根已删除、外部用户数据哨兵仍在：
+对两个已完成的 Portable 输入，可运行下列生命周期验收。脚本不启动桌面程序；它在临时目录中生成两套安装器，静默安装旧版、覆盖升级至新版，以 `DSHDesktop.exe` 的 SHA-256 确认替换；随后尝试回装旧版并确认安装器拒绝降级、仍保留新版文件，最后静默卸载并确认临时安装根已删除、外部用户数据哨兵仍在：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-installer-lifecycle.ps1 `
@@ -82,6 +83,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-installer-lifec
 ```
 
 两个输入的壳二进制必须不同；该限制防止“升级实际没有替换文件”被误报为通过。真实运行时/后端/WebView 冒烟仍需在完整发布输入到位后接入该验收。
+
+普通卸载只删除安装目录，保留 `%LOCALAPPDATA%\DSHDesktop` 下的会话、配置、日志和恢复数据。仅在明确需要清除这些用户数据时，才对安装目录中的 `unins*.exe` 使用 `/PURGEUSERDATA`；该开关不可恢复。若已安装版本记录损坏，安装器会拒绝覆盖，须先正常卸载旧应用，避免版本门禁被意外绕过。
 
 未传 `SkipBundleRuntime=true` 时，缺少任一来源或精确版本会在 `Publish` 前直接失败。完整发布每次
 从零建立 `obj\bundle-runtime\<Configuration>`，生成并自校验 manifest，再发布到
@@ -163,7 +166,7 @@ powershell -ExecutionPolicy Bypass -File scripts/signing/Sign-Artifacts.ps1 `
 dotnet test tests\DSHDesktop.Tests\DSHDesktop.Tests.csproj
 ```
 
-共 **218 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 321 个用例**，当前全绿。
+共 **240 个 `[Fact]` + 20 个 `[Theory]`（97 条 `[InlineData]` + 6 条 MemberData）= 343 个用例**，当前全绿。
 测试工程通过项目引用验证纯 `net10.0` 的 `DSHDesktop.Core`；仍属于 Windows 壳、但只依赖 BCL 的
 `TerminalScreen` / `DesktopLog` / `VersionUpdate` / WebView 安全与启动健康策略继续用源码链接测试。
 
@@ -233,17 +236,17 @@ Directory.Build.targets 版本号与产品元数据的单一来源
 
 | 阶段 | 状态 | 实施内容 | 通过标准 |
 |---|---|---|---|
-| CI 验证基线 | 已有 | Windows 构建、321 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
+| CI 验证基线 | 已有 | Windows 构建、343 个测试、shell-only publish、可选自签 | 主分支构建与测试全绿 |
 | M3 收口 | 进行中 | Desktop 专用宿主适配；把 staging 对系统 npm 的依赖改为锁定下载器；已验签下载、安全原子解包、manifest 身份复验和候选槽接纳已形成单一更新入口；发布源配置模板/校验器已就绪，待提供真实信任根、端点和 UI 接线 | 独立 profile、更新、健康失败回退均可验证 |
 | M5-A Portable | 进行中 | 已实现仅接纳完整、已验证 runtime 槽的确定性 Portable ZIP 工具及 HTTPS/SHA-256 输入锁；待 CI 获取经过兼容矩阵批准的 Node/DSH/pnpm 输入并上传整个载荷 | 干净 Windows 10/11 解压即可首次启动，不读取构建机路径 |
-| M5-B 安装器 | 进行中 | 已新增 Inno Setup 按用户安装器定义、唯一打包入口及安装/升级/卸载生命周期脚本；入口会验证完整 runtime manifest、拒绝 shell-only/损坏输入及源目录内输出；生命周期脚本实际验证文件替换与外部用户数据保留。待真实完整 Portable 输入、运行态冒烟与可信签名 | 静默安装、覆盖升级、失败回退、卸载全绿；默认保留用户数据 |
+| M5-B 安装器 | 进行中 | 已新增 Inno Setup 按用户安装器定义、唯一打包入口及安装/升级/降级拒绝/卸载生命周期脚本；入口会验证完整 runtime manifest、壳 EXE/DLL、法律文件，拒绝 shell-only/损坏输入、版本身份不一致及源目录内输出；生命周期脚本实际验证文件替换、降级拒绝与外部用户数据保留。待真实完整 Portable 输入、运行态冒烟与可信签名 | 静默安装、覆盖升级、失败回退、降级拒绝、卸载全绿；默认保留用户数据 |
 | M5-C 正式发布 | 进行中 | CI 已生成 SPDX SBOM 与 `SHA256SUMS.txt`；待可信 Authenticode、RFC3161、完整运行时资产、NOTICE 审计与发行说明 | 所有发布资产可验证，安装态 WebView2/后端健康冒烟通过 |
 
 发布门的简化顺序为：
 
 ```text
 锁定并验证运行时 → 完整 Portable ZIP → 干净系统启动验证
-                    → 安装器 → 安装/升级/回退/卸载验证 → 正式发布
+                    → 安装器 → 安装/升级/回退/降级拒绝/卸载验证 → 正式发布
 ```
 
 不在 Portable 完整性验证之前封装安装器，避免把缺失运行时或不可复现输入隐藏在 `Setup.exe` 中。

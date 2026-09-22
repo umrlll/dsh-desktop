@@ -28,6 +28,26 @@ public sealed record RuntimeReleaseDownloadResult(
     public bool Success => Status == RuntimeReleaseDownloadStatus.Downloaded;
 }
 
+public enum RuntimeReleaseMetadataStatus
+{
+    Verified,
+    InvalidRequest,
+    DownloadFailed,
+    TooLarge,
+    Invalid,
+    Rejected,
+    ChannelMismatch,
+    Cancelled,
+}
+
+public sealed record RuntimeReleaseMetadataResult(
+    RuntimeReleaseMetadataStatus Status,
+    RuntimeReleaseDescriptor? Descriptor = null,
+    string? Error = null)
+{
+    public bool Success => Status == RuntimeReleaseMetadataStatus.Verified;
+}
+
 /// <summary>
 /// Fetches a signed release document and writes its verified payload atomically. No bytes are
 /// published at <paramref name="destinationPath"/> until the document signature, channel, size,
@@ -45,6 +65,71 @@ public sealed class RuntimeReleaseFeedClient
 
     public long MaximumMetadataBytes { get; init; } = 64 * 1024;
     public long MaximumPayloadBytes { get; init; } = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Obtains and verifies just the signed release descriptor. This is the safe update-check
+    /// primitive: callers can present a candidate only after its channel and trust root pass,
+    /// without downloading a runtime payload.
+    /// </summary>
+    public async Task<RuntimeReleaseMetadataResult> FetchVerifiedDescriptorAsync(
+        Uri metadataUri,
+        IReadOnlyDictionary<string, string> trustedPublicKeys,
+        string requiredChannel,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(metadataUri);
+        ArgumentNullException.ThrowIfNull(trustedPublicKeys);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requiredChannel);
+        if (!metadataUri.IsAbsoluteUri
+            || !string.Equals(metadataUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || MaximumMetadataBytes <= 0)
+        {
+            return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.InvalidRequest);
+        }
+
+        SignedRuntimeRelease release;
+        try
+        {
+            using var response = await _http.GetAsync(
+                metadataUri,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength is { } length && length > MaximumMetadataBytes)
+                return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.TooLarge);
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            release = RuntimeReleaseTrust.Parse(await ReadTextWithinLimitAsync(
+                stream,
+                MaximumMetadataBytes,
+                cancellationToken).ConfigureAwait(false));
+        }
+        catch (PayloadTooLargeException ex)
+        {
+            return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.TooLarge, Error: ex.Message);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.Cancelled);
+        }
+        catch (JsonException ex)
+        {
+            return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.Invalid, Error: ex.Message);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException)
+        {
+            return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.DownloadFailed, Error: ex.Message);
+        }
+
+        var verification = RuntimeReleaseTrust.Verify(release, trustedPublicKeys);
+        if (!verification.IsVerified)
+            return new RuntimeReleaseMetadataResult(
+                RuntimeReleaseMetadataStatus.Rejected,
+                release.Descriptor,
+                verification.Status + ": " + verification.Error);
+        if (!string.Equals(release.Descriptor.Channel, requiredChannel, StringComparison.Ordinal))
+            return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.ChannelMismatch, release.Descriptor);
+        return new RuntimeReleaseMetadataResult(RuntimeReleaseMetadataStatus.Verified, release.Descriptor);
+    }
 
     public async Task<RuntimeReleaseDownloadResult> FetchVerifiedPayloadAsync(
         Uri metadataUri,
